@@ -2,6 +2,25 @@
 #[allow(dead_code)] // Timing/report fields are used by the benchmark example.
 mod support;
 
+#[path = "../examples/sweep/mod.rs"]
+#[allow(dead_code)]
+mod sweep;
+
+#[test]
+fn hdr_near_ties_preserve_reference_exposure_indices() -> support::Result<()> {
+    let Ok(bin) = std::env::var("FLIP_RS_PARITY_BIN") else {
+        eprintln!("SKIP C++ near-tie parity: set FLIP_RS_PARITY_BIN");
+        return Ok(());
+    };
+    let oracle = support::Oracle::new(bin)?;
+    for seed in [15158193341402106541, 12092506619092908091] {
+        let case = sweep::case(seed);
+        support::compare(&case.rust()?, &oracle.cpp(&case, 1)?)
+            .map_err(|e| format!("near-tie seed {seed}: {e}"))?;
+    }
+    Ok(())
+}
+
 #[test]
 fn cpp_reference_parity() -> support::Result<()> {
     let Ok(bin) = std::env::var("FLIP_RS_PARITY_BIN") else {
@@ -10,7 +29,7 @@ fn cpp_reference_parity() -> support::Result<()> {
     };
     let oracle = support::Oracle::new(bin)?;
     for case in support::corpus(false)? {
-        let rust = case.rust()?;
+        let rust = case.rust().map_err(|e| format!("{}: {e}", case.name))?;
         let cpp = oracle.cpp(&case, 1)?;
         support::compare(&rust, &cpp).map_err(|e| format!("{}: {e}", case.name))?;
     }
@@ -47,7 +66,7 @@ fn cpp_reference_tile_boundaries() -> support::Result<()> {
                         )
                     }),
                 };
-                let rust = case.rust()?;
+                let rust = case.rust().map_err(|e| format!("{}: {e}", case.name))?;
                 let cpp = oracle.cpp(&case, 1)?;
                 support::compare(&rust, &cpp).map_err(|e| format!("{}: {e}", case.name))?;
             }

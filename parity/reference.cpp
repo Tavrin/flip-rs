@@ -40,10 +40,11 @@ int main(int argc, char** argv) {
         // One warmup for benchmark mode; no warmup for one-shot parity.
         for (int i = (repeats > 1 ? -1 : 0); i < repeats; ++i) {
             error.clear(); exposure.clear(); used = options;
+            // Input restoration is outside timing on both sides.
+            if (!hdr) { ref.setPixels(r.data(), w, h); test.setPixels(t.data(), w, h); }
             auto start = std::chrono::steady_clock::now();
             // Include sRGB conversion in LDR timing, as in the Rust API.
             if (!hdr) {
-                ref.setPixels(r.data(), w, h); test.setPixels(t.data(), w, h);
                 ref.clamp(); test.clamp(); ref.sRGBToLinearRGB(); test.sRGBToLinearRGB();
             }
             FLIP::evaluate(ref, test, hdr, used, error, exposure);
@@ -51,6 +52,14 @@ int main(int argc, char** argv) {
             if (i >= 0) times.push_back(std::chrono::duration<double>(stop - start).count());
         }
         std::sort(times.begin(), times.end());
+        // Preserve the reference calculation, but do not feed a NaN to the
+        // pooling histogram's float-to-integer conversion (undefined C++).
+        for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+            if (!std::isfinite(error.get(x, y))) {
+                std::cerr << "reference produced nonfinite error pixels; pooling would be undefined\n";
+                return 3;
+            }
+        }
         FLIPPooling::pooling<float> pool;
         for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) pool.update(x, y, error.get(x, y));
         std::ofstream out(argv[11], std::ios::binary);

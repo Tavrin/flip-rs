@@ -1,0 +1,50 @@
+[package]
+name = "flip-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+flip-rs = { path = "..", default-features = false, features = ["image"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "ldr_flip"
+path = "fuzz_targets/ldr_flip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hdr_flip"
+path = "fuzz_targets/hdr_flip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pooling"
+path = "fuzz_targets/pooling.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "colorize"
+path = "fuzz_targets/colorize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "image_loaders"
+path = "fuzz_targets/image_loaders.rs"
+test = false
+doc = false
+bench = false
