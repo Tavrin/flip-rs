@@ -1,0 +1,39 @@
+[package]
+name = "flip-rs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Rust port of NVIDIA FLIP v1.7, a perceptual image-difference metric for LDR and HDR images"
+authors = ["flip-rs contributors"]
+license = "BSD-3-Clause"
+repository = "https://github.com/Tavrin/flip-rs"
+readme = "README.md"
+keywords = ["flip", "image-comparison", "perceptual", "hdr", "image-quality"]
+categories = ["multimedia::images", "graphics", "wasm"]
+include = [
+    "/src/**/*.rs",
+    "/tests/api.rs",
+    "/examples/compare.rs",
+    "/Cargo.toml",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = ["parallel"]
+parallel = ["dep:rayon"]
+image = ["dep:image"]
+wasm = ["dep:wasm-bindgen", "dep:js-sys"]
+
+[dependencies]
+rayon = { version = "1.10", optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "exr"], optional = true }
+wasm-bindgen = { version = "0.2.114", optional = true }
+js-sys = { version = "0.3.91", optional = true }
+
+[package.metadata.docs.rs]
+all-features = true
