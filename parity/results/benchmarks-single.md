@@ -1,6 +1,34 @@
 | Case | C++ -O2 single thread (s) | Rust (s) | C++ / Rust |
 |---|---:|---:|---:|
-| LDR 1920×1080 | 0.663150 | 0.312559 | 2.12× |
-| HDR ACES, 3 exposures 1920×1080 | 1.823382 | 0.664654 | 2.74× |
-| LDR 3840×2160 | 2.824842 | 1.402038 | 2.01× |
-| HDR ACES, 3 exposures 3840×2160 | 7.700175 | 2.927472 | 2.63× |
+| LDR 1920×1080 | 0.697189 | 0.346759 | 2.01× |
+| HDR ACES, 3 exposures 1920×1080 | 2.069816 | 0.798613 | 2.59× |
+| LDR 3840×2160 | 3.145998 | 1.452090 | 2.17× |
+| HDR ACES, 3 exposures 3840×2160 | 8.251707 | 3.378650 | 2.44× |
+
+## Qualification binding
+
+Rust base revision: `5f4d5c29a0dc40fed2bda8e1d6f6ccc1772d412e`; the measured working sources include the uncommitted hardening changes. The SHA-256 snapshot below binds those exact sources.
+
+- `Cargo.lock`: `4e4fc4ff20f311e0daf9a9745c8d8d3e0a9dee320be259961936d22ea6e4d0b3`
+- `Cargo.toml`: `2a7b44f5dbb2086373b00a6d3745097e38573b5ce416baa7539ae204e66c185e`
+- `examples/compare.rs`: `07d1c05639f15e2e8bb1bb62c163f1826a4f47dd338a34291f9e9bce0a356c11`
+- `examples/parity.rs`: `6825a0c86ca186482ee7130dbf4a6cf5b8686ae236abe8ab7bdeb993669dd434`
+- `examples/support/mod.rs`: `c2d15ee9220af7331f1db2b628b13244a13704cd5bac6d0beb99e36ea23d78fa`
+- `examples/sweep/mod.rs`: `000b31b50fb2119d4775d4e16dd7a8c3c3c59a5f332369b9a69945e91ec84642`
+- `parity/check-reference.sh`: `018f5c9de08a5509fe3e90884e8dca9f6ff3da32d5bc2c8b06e98df26f4b5c0a`
+- `parity/reference.cpp`: `d668adc55432eff523460a84cb2a0735c40ce28b9107f76dc70599d7c7a5eeeb`
+- `parity/run.sh`: `2af5b83ce12173439766ad135ba0ae3a0f6d7a3e18d0ba23c7b8c9c3001d1bc9`
+- `parity/sweep.sh`: `4937418468a0c98aebcfa7bc441e8a2cd106186edab9e1712ca814f9bcddfec5`
+- `src/color.rs`: `b34d4d6266cbc166b81d58b354d5cd1c584abda530ac76477a67a429d93b69c1`
+- `src/filters.rs`: `b5dc598c4e65613091c3f97e39be1b5eff7f26d8ba40433c8746a6c14609a7b7`
+- `src/hdr.rs`: `828bbeceb24fa7f685bc6bde8c442e1d517f2e3cd02df1e752ae1705ebd5ea44`
+- `src/io.rs`: `51c7e129202d7d7ddfcd1822d0b4d1bb2dda02952f1486be0504187638010e8d`
+- `src/lib.rs`: `250f28aaed2e80159ca26b462ffd5cced2bfc56254119440b92893d78d5c67fc`
+- `src/magma.rs`: `59340581c70404490a1b77fe932e2a0ddbe387ceaccc8c673ea5db95e6f7cf97`
+- `src/pooling.rs`: `c20e188db741edbb7bc8528ded9bc788d1538748ab8d376aa86d31266a6558db`
+- `src/wasm.rs`: `d17331686f40ee277ea1b557d57a5410fab687e8ed451e51c5825d8e56d1276a`
+- Rust parity/benchmark executable SHA-256: `3090a009359280b5a40e572edc2284b6cadf29698ebaf2d75fe3f21ad2c6e30e`
+- C++ oracle executable SHA-256: `a64f0aec7aeb2f093b2564f3beeb2df07cdd8103a16a7a6e5f029847f39ffd25`
+- rustc: `rustc 1.98.1 (48a229cea 2026-09-01)`
+- cargo: `cargo 1.98.1 (797e8a9bc 2026-08-05)`
+- g++: `13.3.0`

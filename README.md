@@ -16,25 +16,26 @@ features disabled it has no dependencies at all and builds for
 
 ## Parity with the C++ reference
 
-Every case in a 201-case corpus is compared against NVIDIA's C++
+Every case in a measured 201-case corpus is compared against NVIDIA's C++
 implementation at revision `b475eb4` (v1.7):
 
 | Corpus | Cases | Max pixel difference | Max pooled difference | Max exposure-map difference |
 |---|---:|---:|---:|---:|
-| Generated HDR | 157 | 2.980232239e-8 | 0 | 0 |
-| Generated LDR | 21 | 2.980232239e-8 | 0 | 0 |
-| Reference EXR | 18 | 5.960464478e-8 | 0 | 0 |
-| Reference PNG | 5 | 5.960464478e-8 | 0 | 0 |
+| Generated HDR | 157 | 0 | 0 | 0 |
+| Generated LDR | 21 | 0 | 0 | 0 |
+| Reference EXR | 18 | 0 | 0 | 0 |
+| Reference PNG | 5 | 0 | 0 | 0 |
 
 Pooled statistics (mean, weighted quartiles, minimum, maximum), histogram
 counts and exposure maps match exactly, and the automatically chosen exposure
-counts are equal. The remaining per-pixel differences come from one
-expression: LLVM lowers `powf(x, 0.5)` to a square-root instruction, while GCC
-calls glibc's `powf`. With that call replaced by `sqrt` in a diagnostic copy of
-the C++ header, the maps were bit-identical on the three inputs checked (seeded
-noise at 127×127 and 1024×1024, and the upstream PNG pair). The harness fails a
-case above 1e-5 per pixel, 1e-6 for pooled values, exposure maps and exposure
-endpoints, or on any histogram or exposure-count mismatch.
+counts are equal. The randomized sweep additionally checks 3,000 seeded cases, including
+narrow and prime dimensions, random PPD and HDR exposure degeneracies. Its
+statistics and replay seeds are in [the sweep report](parity/results/sweep.md).
+Measured agreement applies to these inputs and toolchains. The harness fails
+a case above 1e-5 per pixel, 1e-6 for pooled values, exposure maps and exposure
+endpoints, or on any histogram or exposure-count mismatch. The feature
+exponent preserves the reference `powf(x, 0.5)` operation because substituting
+`sqrt` can change the winning exposure on HDR near-ties.
 
 The corpus covers all of the upstream example images, flat colors, gradients,
 edges, seeded noise, sizes from 1×1 to 1930×1080, all-black and mostly-black
@@ -47,14 +48,15 @@ See [Reproducing the parity results](#reproducing-the-parity-results).
 Median of three runs after one warm-up, on seeded noise at the default PPD.
 HDR uses ACES with three exposures. Timings cover the comparison call
 (color conversion, tone mapping, filtering and allocation); decoding and
-pooling are excluded.
+pooling are excluded. The tables were refreshed after the hardening fixes,
+with C++ input restoration outside timing and fuzzing finished.
 
 | Case | C++, 1 thread (s) | Rust, 1 thread (s) | C++ / Rust | Rust, 8 threads (s) |
 |---|---:|---:|---:|---:|
-| LDR 1920×1080 | 0.663150 | 0.312559 | 2.12× | 0.053970 |
-| HDR 1920×1080 | 1.823382 | 0.664654 | 2.74× | 0.118964 |
-| LDR 3840×2160 | 2.824842 | 1.402038 | 2.01× | 0.222860 |
-| HDR 3840×2160 | 7.700175 | 2.927472 | 2.63× | 0.537772 |
+| LDR 1920×1080 | 0.697189 | 0.346759 | 2.01× | 0.203153 |
+| HDR 1920×1080 | 2.069816 | 0.798613 | 2.59× | 0.189725 |
+| LDR 3840×2160 | 3.145998 | 1.452090 | 2.17× | 0.603286 |
+| HDR 3840×2160 | 8.251707 | 3.378650 | 2.44× | 1.198722 |
 
 Measured on an AMD Ryzen 9 7945HX (16 cores) under Linux, with Rust 1.98.1 and
 GCC 13.3, using portable code generation for both (no `-march=native`, fast
@@ -89,7 +91,7 @@ fn main() -> Result<(), flip_rs::FlipError> {
     let stats = error_map.statistics();
     println!("mean {}, weighted median {}", stats.mean, stats.weighted_median);
 
-    let heatmap = error_map.colorize(); // sRGB floats, Magma colormap
+    let heatmap = error_map.colorize()?; // sRGB floats, Magma colormap
     assert_eq!(heatmap.pixels().len(), 6);
     Ok(())
 }
@@ -137,7 +139,7 @@ The minimum supported Rust version is 1.88.
 ## WebAssembly
 
 The core library builds for `wasm32-unknown-unknown` with
-`--no-default-features`. The `wasm` feature adds one JavaScript export,
+`--no-default-features`. On `wasm32`, the `wasm` feature adds one JavaScript export,
 `ldrFlip(referenceRgba, testRgba, width, height, ppd)`. It takes RGBA bytes
 such as `ImageData.data`, ignores alpha, returns a `Float32Array` with one
 error per pixel, and throws an `Error` for invalid input.
@@ -186,11 +188,29 @@ Where v1.7 has no defined result, this crate returns a `FlipError` instead:
 - A very small PPD gives zero filter normalizers in the reference, producing
   NaN. It is rejected.
 - Zero or overflowing dimensions, mismatched sizes, NaN or infinite input,
-  reversed exposure ranges and fewer than two exposures are rejected.
+  reversed exposure ranges and exposure counts outside 2..=128 are rejected.
+- Kernels are limited to 8,193 taps (radius 4,096), and each evaluation to
+  2^34 weighted channel additions, calculated from both image size and PPD.
+  Full kernels are retained for reference summation order. Excessive work is
+  rejected before allocating; internal evaluation buffers use fallible
+  reservations and return `FlipError::Allocation` on failure.
+- The 128-exposure cap bounds repeated full-image work and accommodates up to
+  128 samples across HDR ranges, including the original extreme corpus
+  requiring 70 automatic exposures; it is a Rust resource policy, not an
+  upstream limit. Equal endpoints evaluate once while keeping the declared
+  count and earliest exposure indices.
+- `colorize()` returns `Result`, checking the three-channel byte layout and
+  reserving fallibly. Raw gray-RGB saving uses the same checks.
+- `load_srgb` accepts PNG and assumes its channels are sRGB (no profile
+  transformation). `load_linear` accepts only OpenEXR and assumes linear
+  channels. Mixed pairs are rejected by the comparison example.
 
 Two reference quirks are kept: the pooled maximum of an all-zero map is
 `f32::MIN_POSITIVE`, and errors above 1 in a map built with `ErrorMap::new`
-are left out of the histogram. Extremely large HDR values can overflow in the
+are left out of the histogram. Pooling intentionally accumulates in `f32`;
+large externally supplied values can overflow it. `Statistics::finite` flags
+that condition; the mean and weighted quartiles then cannot be used, while
+extrema and histogram remain valid. Extremely large HDR values can overflow in the
 tone curve; the resulting NaN is clamped to 0, as in the reference.
 
 ## References

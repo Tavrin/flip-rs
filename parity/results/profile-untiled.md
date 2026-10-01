@@ -1,3 +1,5 @@
+> Historical baseline before hardening. This record lacks a Rust source revision and benchmark executable hash; it does not qualify the current source. See [qualification.md](qualification.md) for current bound measurements.
+
 # Single-thread stage profile, untiled filters
 
 Stage profile of the earlier untiled filter implementation, for comparison
