@@ -25,7 +25,9 @@ pub fn ldr_flip_rgba(
             .0
             .iter()
             .flat_map(|p| [p[0], p[1], p[2]]);
-        RgbImage::new(w, h, rgb.collect())
+        let mut pixels = crate::reserved(dimensions(w, h, 3)?)?;
+        pixels.extend(rgb);
+        RgbImage::new(w, h, pixels)
     };
     let map = to_rgb(reference)
         .and_then(|r| ldr_flip(&r, &to_rgb(test)?, ppd))

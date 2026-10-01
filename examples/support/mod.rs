@@ -70,6 +70,14 @@ impl Case {
     }
 }
 
+pub enum Probe {
+    Output(Output),
+    Rejected {
+        code: Option<i32>,
+        diagnostic: String,
+    },
+}
+
 pub struct Oracle {
     bin: PathBuf,
     dir: PathBuf,
@@ -90,6 +98,14 @@ impl Oracle {
         })
     }
     pub fn cpp(&self, case: &Case, repeats: usize) -> Result<Output> {
+        match self.probe(case, repeats)? {
+            Probe::Output(output) => Ok(output),
+            Probe::Rejected { code, diagnostic } => {
+                Err(format!("C++ failed for {} (exit {code:?}): {diagnostic}", case.name).into())
+            }
+        }
+    }
+    pub fn probe(&self, case: &Case, repeats: usize) -> Result<Probe> {
         let r = self.dir.join("reference.f32");
         let t = self.dir.join("test.f32");
         let out = self.dir.join("output.bin");
@@ -128,13 +144,16 @@ impl Oracle {
             .arg(repeats.to_string())
             .output()?;
         if !status.status.success() {
-            return Err(format!(
-                "C++ failed for {}: {} {}",
-                case.name,
-                String::from_utf8_lossy(&status.stdout),
-                String::from_utf8_lossy(&status.stderr)
-            )
-            .into());
+            return Ok(Probe::Rejected {
+                code: status.status.code(),
+                diagnostic: format!(
+                    "{} {}",
+                    String::from_utf8_lossy(&status.stdout),
+                    String::from_utf8_lossy(&status.stderr)
+                )
+                .trim()
+                .into(),
+            });
         }
         let bytes = std::fs::read(out)?;
         let n = case.w * case.h;
@@ -179,12 +198,12 @@ impl Oracle {
         } else {
             None
         };
-        Ok(Output {
+        Ok(Probe::Output(Output {
             map,
             exposure,
             used: case.options.map(|_| (start, stop, count)),
             seconds,
-        })
+        }))
     }
 }
 impl Drop for Oracle {

@@ -29,6 +29,10 @@ impl Histogram {
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Statistics {
+    /// Whether the `f32` total and reported statistics are finite. When false,
+    /// mean and weighted quartiles are unreliable; histogram and extrema
+    /// remain usable. This retains reference arithmetic without hiding overflow.
+    pub finite: bool,
     /// Mean error, summed sequentially in `f32` in row-major order.
     pub mean: f32,
     /// Error-weighted median.
@@ -79,6 +83,7 @@ pub(crate) fn statistics(data: &[f32]) -> Statistics {
         0.0
     };
     Statistics {
+        finite: sum.is_finite(),
         mean: sum / data.len() as f32,
         weighted_median: percentile(0.5),
         first_quartile: percentile(0.25),

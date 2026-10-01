@@ -99,10 +99,10 @@ fn reference_pooling_and_magma_rounding() {
     let zero = ErrorMap::new(1, 1, vec![0.0]).unwrap();
     assert_eq!(zero.statistics().max, f32::MIN_POSITIVE); // Upstream quirk.
     assert_eq!(zero.statistics().weighted_median, 0.0);
-    assert_eq!(zero.colorize().pixels(), &MAGMA[0]);
+    assert_eq!(zero.colorize().unwrap().pixels(), &MAGMA[0]);
     let map = ErrorMap::new(3, 1, vec![0.5, 1.0, 2.0]).unwrap();
     assert_eq!(
-        map.colorize().pixels(),
+        map.colorize().unwrap().pixels(),
         [MAGMA[128], MAGMA[255], MAGMA[255]].concat()
     );
     assert_eq!(map.statistics().histogram.counts[99], 1);
@@ -134,6 +134,55 @@ fn hdr_defined_black_inputs_and_ties() {
         assert!(hdr_flip(&dark, &light, explicit(tonemapper, -4.0, 4.0, 1)).is_err());
         assert!(hdr_flip(&dark, &light, explicit(tonemapper, 10.0, 4.0, 3)).is_err());
     }
+}
+
+#[test]
+fn hostile_ppd_is_bounded_and_input_validation_precedes_filters() {
+    let image = rgb(1, 1, &[0.0; 3]);
+    assert!(matches!(
+        ldr_flip(&image, &image, 1e10),
+        Err(FlipError::InvalidParameter(_))
+    ));
+    let nan = rgb(1, 1, &[f32::NAN; 3]);
+    assert!(matches!(
+        ldr_flip(&nan, &image, 1e10),
+        Err(FlipError::NonFiniteInput)
+    ));
+    let mut options = explicit(Tonemapper::Aces, 0.0, 0.0, 2);
+    options.ppd = 1e10;
+    assert!(matches!(
+        hdr_flip(&image, &image, options),
+        Err(FlipError::InvalidParameter(_))
+    ));
+}
+
+#[test]
+fn hdr_workload_is_bounded_and_equal_endpoints_preserve_semantics() {
+    let a = rgb(1, 1, &[0.1; 3]);
+    let b = rgb(1, 1, &[0.2; 3]);
+    for count in [129, i32::MAX as usize, usize::MAX] {
+        assert!(matches!(
+            hdr_flip(&a, &b, explicit(Tonemapper::Aces, 0.0, 0.0, count)),
+            Err(FlipError::InvalidParameter(_))
+        ));
+    }
+    let two = hdr_flip(&a, &b, explicit(Tonemapper::Aces, 0.0, 0.0, 2)).unwrap();
+    let many = hdr_flip(&a, &b, explicit(Tonemapper::Aces, 0.0, 0.0, 128)).unwrap();
+    assert_eq!(two.error_map.pixels(), many.error_map.pixels());
+    assert_eq!(many.exposure_map.unwrap().pixels(), &[0.0]);
+    assert_eq!(many.parameters.num_exposures, 128);
+    let mut auto = explicit(Tonemapper::Aces, -80.0, 80.0, 2);
+    auto.num_exposures = None;
+    assert!(hdr_flip(&a, &b, auto).is_err());
+}
+
+#[test]
+fn pooling_flags_nonfinite_total_without_changing_reference_arithmetic() {
+    let s = ErrorMap::new(2, 1, vec![f32::MAX; 2]).unwrap().statistics();
+    assert!(!s.finite);
+    assert!(s.mean.is_infinite());
+    assert_eq!(s.histogram.out_of_range, 2);
+    assert!(ErrorMap::new(1, 1, vec![0.5]).unwrap().statistics().finite);
 }
 
 #[test]
@@ -182,8 +231,10 @@ fn png_and_exr_helpers_round_trip() {
     let map = ErrorMap::new(2, 1, vec![0.0, 1.0]).unwrap();
     flip_rs::io::save_heatmap(&map, dir.join("test.png")).unwrap();
     let loaded = flip_rs::io::load_srgb(dir.join("test.png")).unwrap();
+    assert!(flip_rs::io::load_linear(dir.join("test.png")).is_err());
+    assert!(flip_rs::io::load_srgb(dir.join("test.exr")).is_err());
     assert_eq!((loaded.width(), loaded.height()), (2, 1));
-    for (&a, &b) in loaded.pixels().iter().zip(map.colorize().pixels()) {
+    for (&a, &b) in loaded.pixels().iter().zip(map.colorize().unwrap().pixels()) {
         assert!((a - b).abs() <= 0.5 / 255.0 + f32::EPSILON);
     }
     std::fs::remove_dir_all(dir).unwrap();

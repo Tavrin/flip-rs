@@ -1,8 +1,12 @@
 mod support;
+mod sweep;
 use flip_rs::{Tonemapper, DEFAULT_PPD};
 use support::{compare, corpus, generated, hdr_options, Case, Oracle, Result};
 
 fn main() -> Result<()> {
+    if std::env::args().any(|s| s == "--sweep") {
+        return sweep::run();
+    }
     let bin = std::env::var("FLIP_RS_PARITY_BIN")?;
     let oracle = Oracle::new(bin)?;
     let benchmark = std::env::args().any(|s| s == "--bench");

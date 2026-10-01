@@ -3,7 +3,8 @@
 //!
 //! The output is a per-pixel error map, normally in 0..1, together with pooled
 //! statistics and a Magma heatmap. Results match the C++ reference at revision
-//! `b475eb4` to within 6e-8 per pixel; see the repository's `parity/` directory.
+//! `b475eb4` to within 6e-8 per pixel on the measured corpus; see the
+//! repository's `parity/` directory for corpus and randomized sweep results.
 //!
 //! # Algorithm
 //!
@@ -42,7 +43,7 @@
 //!
 //! - `parallel` (default): process independent image rows with Rayon.
 //!   Pooling is always sequential, so results do not depend on this feature.
-//! - `image`: the [`io`] module, which loads and saves PNG and OpenEXR files.
+//! - `image`: the `io` module, which loads and saves PNG and OpenEXR files.
 //! - `wasm`: a wasm-bindgen export, `ldrFlip`, for RGBA bytes from `ImageData`.
 //!
 //! # References
@@ -65,16 +66,18 @@ mod hdr;
 pub mod io;
 mod magma;
 mod pooling;
-#[cfg(feature = "wasm")]
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 mod wasm;
-#[cfg(feature = "wasm")]
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 pub use wasm::ldr_flip_rgba;
 
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
 
-pub use hdr::{hdr_flip, ExposureMap, HdrOptions, HdrParameters, HdrResult, Tonemapper};
+pub use hdr::{
+    hdr_flip, ExposureMap, HdrOptions, HdrParameters, HdrResult, Tonemapper, MAX_EXPOSURES,
+};
 pub use magma::MAGMA;
 pub use pooling::{Histogram, Statistics};
 
@@ -125,6 +128,8 @@ pub enum FlipError {
     NonFiniteInput,
     /// A parameter would make the reference algorithm undefined.
     InvalidParameter(&'static str),
+    /// A fallible buffer reservation failed.
+    Allocation(std::collections::TryReserveError),
     /// Loading or saving an image file failed.
     #[cfg(feature = "image")]
     Image(image::ImageError),
@@ -139,6 +144,7 @@ impl std::fmt::Display for FlipError {
             Self::SizeMismatch => f.write_str("image dimensions or buffer lengths do not match"),
             Self::NonFiniteInput => f.write_str("input contains a nonfinite value"),
             Self::InvalidParameter(msg) => f.write_str(msg),
+            Self::Allocation(err) => write!(f, "buffer allocation failed: {err}"),
             #[cfg(feature = "image")]
             Self::Image(err) => err.fmt(f),
         }
@@ -148,6 +154,7 @@ impl std::fmt::Display for FlipError {
 impl std::error::Error for FlipError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Allocation(err) => Some(err),
             #[cfg(feature = "image")]
             Self::Image(err) => Some(err),
             _ => None,
@@ -159,6 +166,12 @@ impl std::error::Error for FlipError {
 impl From<image::ImageError> for FlipError {
     fn from(err: image::ImageError) -> Self {
         Self::Image(err)
+    }
+}
+
+impl From<std::collections::TryReserveError> for FlipError {
+    fn from(err: std::collections::TryReserveError) -> Self {
+        Self::Allocation(err)
     }
 }
 
@@ -278,24 +291,31 @@ impl ErrorMap {
     }
     /// Pools the map as the reference tool does: mean, error-weighted
     /// quartiles, extrema and a 100-bin histogram.
+    ///
+    /// Accumulation stays in `f32` for reference parity. Very large externally
+    /// supplied values can overflow the sum; check [`Statistics::finite`]
+    /// before using the mean or quartiles.
     pub fn statistics(&self) -> Statistics {
         pooling::statistics(&self.pixels)
     }
     /// Maps each error to the [`MAGMA`] colormap, returning sRGB floats.
     ///
     /// Values outside 0..=1 are clamped.
-    pub fn colorize(&self) -> RgbImage<f32> {
+    /// # Errors
+    ///
+    /// [`FlipError::InvalidDimensions`] if the RGB expansion cannot be
+    /// represented (including on wasm32), or [`FlipError::Allocation`].
+    pub fn colorize(&self) -> Result<RgbImage<f32>, FlipError> {
         // FLIP::tensor::colorMap
-        let pixels = self
-            .pixels
-            .iter()
-            .flat_map(|v| MAGMA[(v.clamp(0.0, 1.0) * 255.0 + 0.5) as usize])
-            .collect();
-        RgbImage {
+        let mut pixels = reserved(dimensions(self.width, self.height, 3)?)?;
+        for v in &self.pixels {
+            pixels.extend_from_slice(&MAGMA[(v.clamp(0.0, 1.0) * 255.0 + 0.5) as usize]);
+        }
+        Ok(RgbImage {
             width: self.width,
             height: self.height,
             pixels,
-        }
+        })
     }
 }
 
@@ -311,7 +331,11 @@ impl ErrorMap {
 /// [`FlipError::SizeMismatch`] if the dimensions differ,
 /// [`FlipError::NonFiniteInput`] for NaN or infinite channels, and
 /// [`FlipError::InvalidParameter`] if `ppd` is not finite and positive or
-/// yields degenerate filters.
+/// yields degenerate filters or exceeds the filter limits: at most 8,193
+/// taps per kernel and 2^34 weighted channel additions per evaluation.
+/// Full reference kernels are retained even for narrow images; rejecting
+/// excessive work avoids changing replicated-border summation order.
+/// [`FlipError::Allocation`] if a buffer reservation fails.
 pub fn ldr_flip<R: Channel, T: Channel>(
     reference: &RgbImage<R>,
     test: &RgbImage<T>,
@@ -320,7 +344,6 @@ pub fn ldr_flip<R: Channel, T: Channel>(
     if reference.width != test.width || reference.height != test.height {
         return Err(FlipError::SizeMismatch);
     }
-    let filters = filters::Filters::new(ppd)?;
     if reference
         .pixels
         .iter()
@@ -332,6 +355,7 @@ pub fn ldr_flip<R: Channel, T: Channel>(
     {
         return Err(FlipError::NonFiniteInput);
     }
+    let filters = filters::Filters::new(ppd, reference.width, reference.height)?;
     let mut workspace = filters.workspace(reference.width, reference.height)?;
     let convert = |p: [f32; 3]| {
         // color3::sRGBToLinearRGB -> LinearRGBToXYZ -> XYZToYCxCz
@@ -348,16 +372,70 @@ pub fn ldr_flip<R: Channel, T: Channel>(
 }
 
 pub(crate) fn dimensions(w: usize, h: usize, channels: usize) -> Result<usize, FlipError> {
+    dimensions_with_limit(w, h, channels, isize::MAX as usize)
+}
+
+fn dimensions_with_limit(
+    w: usize,
+    h: usize,
+    channels: usize,
+    byte_limit: usize,
+) -> Result<usize, FlipError> {
     let n = w.checked_mul(h).and_then(|n| n.checked_mul(channels));
     match n {
-        Some(n) if w > 0 && h > 0 && n <= isize::MAX as usize / std::mem::size_of::<f32>() => Ok(n),
+        Some(n) if w > 0 && h > 0 && n <= byte_limit / std::mem::size_of::<f32>() => Ok(n),
         _ => Err(FlipError::InvalidDimensions),
     }
 }
+
+pub(crate) fn reserved<T>(len: usize) -> Result<Vec<T>, FlipError> {
+    let mut data = Vec::new();
+    data.try_reserve_exact(len)?;
+    Ok(data)
+}
+
+pub(crate) fn zeros(len: usize) -> Result<Vec<f32>, FlipError> {
+    let mut data = reserved(len)?;
+    data.resize(len, 0.0);
+    Ok(data)
+}
+
 pub(crate) fn finite(data: &[f32]) -> Result<(), FlipError> {
     if data.iter().any(|v| !v.is_finite()) {
         Err(FlipError::NonFiniteInput)
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn rgb_expansion_checks_wasm32_byte_limit_before_reserving() {
+        let limit = i32::MAX as usize;
+        assert!(dimensions_with_limit(178_956_971, 1, 1, limit).is_ok());
+        assert!(matches!(
+            dimensions_with_limit(178_956_971, 1, 3, limit),
+            Err(FlipError::InvalidDimensions)
+        ));
+        assert!(dimensions(usize::MAX, 2, 3).is_err());
+        assert!(matches!(
+            reserved::<f32>(usize::MAX),
+            Err(FlipError::Allocation(_))
+        ));
+    }
+
+    #[test]
+    fn filter_work_counts_all_vertical_feature_accumulators() {
+        // At PPD 200, 11M pixels exceeded the work limit only when all eight
+        // vertical feature accumulators were included. No image allocation.
+        assert!(matches!(
+            filters::Filters::new(200.0, 11_000_000, 1),
+            Err(FlipError::InvalidParameter(
+                "image and PPD exceed the 2^34 filter-work limit"
+            ))
+        ));
     }
 }

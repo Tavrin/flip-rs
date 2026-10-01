@@ -5,7 +5,7 @@
 //! cargo run --release --features image --example compare -- reference.exr test.exr heatmap.png 67.02 hable
 //! ```
 //!
-//! `.exr` inputs are evaluated with HDR-FLIP, anything else with LDR-FLIP.
+//! PNG pairs use LDR-FLIP; OpenEXR pairs use HDR-FLIP. Mixed pairs are rejected.
 
 use flip_rs::{hdr_flip, io, ldr_flip, HdrOptions, Tonemapper, DEFAULT_PPD};
 use std::path::Path;
@@ -21,9 +21,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(ppd) => ppd.parse()?,
         None => DEFAULT_PPD,
     };
-    let hdr = Path::new(reference)
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("exr"));
+    let is_hdr = |path: &str| {
+        Path::new(path)
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("exr"))
+    };
+    let hdr = is_hdr(reference);
+    if hdr != is_hdr(test) {
+        return Err("reference and test must both be PNG or both be OpenEXR".into());
+    }
     let map = if hdr {
         let mut options = HdrOptions::default();
         options.ppd = ppd;

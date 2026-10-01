@@ -7,7 +7,7 @@ pub(crate) struct Filters {
 }
 
 impl Filters {
-    pub(crate) fn new(ppd: f32) -> Result<Self, FlipError> {
+    pub(crate) fn new(ppd: f32, w: usize, h: usize) -> Result<Self, FlipError> {
         // calculateSpatialFilterRadius / setSpatialFilters / setFeatureFilter
         if !ppd.is_finite() || ppd <= 0.0 {
             return Err(FlipError::InvalidParameter(
@@ -17,11 +17,27 @@ impl Filters {
         let radius = (3.0 * (0.04 / (2.0 * (PI * PI))).sqrt() * ppd).ceil();
         let sigma = 0.5 * 0.082 * ppd;
         let feature_radius = (3.0 * sigma).ceil();
-        if radius.max(feature_radius) >= (isize::MAX as usize / 32) as f32 {
-            return Err(FlipError::InvalidParameter("PPD filter size overflows"));
+        // Retain full kernels for exact reference reduction order. Bound
+        // storage and image-dependent work before any allocation. 2^34
+        // permits default-PPD 4K comparisons with headroom.
+        if radius.max(feature_radius) > 4096.0 {
+            return Err(FlipError::InvalidParameter(
+                "PPD exceeds the 8193-tap kernel limit",
+            ));
+        }
+        let spatial_len = 2 * radius as usize + 1;
+        let feature_len = 2 * feature_radius as usize + 1;
+        let pixels = crate::dimensions(w, h, 1)?;
+        // Color: 8 channels in each pass. Features: 6 horizontal and
+        // 8 vertical accumulators. Count every weighted channel addition.
+        let work = (pixels as u64).checked_mul((16 * spatial_len + 14 * feature_len) as u64);
+        if work.is_none_or(|n| n > (1 << 34)) {
+            return Err(FlipError::InvalidParameter(
+                "image and PPD exceed the 2^34 filter-work limit",
+            ));
         }
         let radius = radius as isize;
-        let mut spatial = Vec::new();
+        let mut spatial = crate::reserved(spatial_len)?;
         let mut sum = [0.0; 4];
         let delta = 1.0 / ppd;
         for i in -radius..=radius {
@@ -52,7 +68,7 @@ impl Filters {
             weights[2] *= norm[2];
             weights[3] *= norm[2];
         }
-        let mut feature = Vec::new();
+        let mut feature = crate::reserved(feature_len)?;
         let (mut gsum, mut dgneg, mut dgpos, mut ddgneg, mut ddgpos) = (0.0, 0.0, 0.0, 0.0, 0.0);
         for i in -(feature_radius as isize)..=feature_radius as isize {
             let x = i as f32;
@@ -99,10 +115,10 @@ impl Filters {
         let input_size = crate::dimensions(stride, h, 3)?;
         let intermediate_size = crate::dimensions(w, h, 8)?;
         Ok(Workspace {
-            reference: Opponent::new(w, stride, input_size),
-            test: Opponent::new(w, stride, input_size),
-            intermediate: vec![0.0; intermediate_size],
-            pixels: vec![0.0; w * h],
+            reference: Opponent::new(w, stride, input_size)?,
+            test: Opponent::new(w, stride, input_size)?,
+            intermediate: crate::zeros(intermediate_size)?,
+            pixels: crate::zeros(crate::dimensions(w, h, 1)?)?,
         })
     }
 
@@ -214,6 +230,10 @@ impl Filters {
             }
         });
         let norm = 1.0 / 2.0_f32.sqrt();
+        // LLVM otherwise replaces powf(x, 0.5) with sqrt. The last-bit
+        // difference can change the winning HDR exposure on near-ties.
+        // Keep the reference powf operation, including its rounding.
+        let feature_exponent = std::hint::black_box(0.5_f32);
         rows(out, w, |y, row| {
             for (tile, dst) in row.chunks_mut(TILE).enumerate() {
                 let x = tile * TILE;
@@ -238,8 +258,8 @@ impl Filters {
                     let edge_t = (sum[4][i] * sum[4][i] + sum[6][i] * sum[6][i]).sqrt();
                     let point_r = (sum[1][i] * sum[1][i] + sum[3][i] * sum[3][i]).sqrt();
                     let point_t = (sum[5][i] * sum[5][i] + sum[7][i] * sum[7][i]).sqrt();
-                    *feature =
-                        (norm * (edge_r - edge_t).abs().max((point_r - point_t).abs())).powf(0.5);
+                    *feature = (norm * (edge_r - edge_t).abs().max((point_r - point_t).abs()))
+                        .powf(feature_exponent);
                 }
                 for (dst, &feature) in dst.iter_mut().zip(&features[..len]) {
                     *dst = dst.powf(1.0 - feature);
@@ -318,12 +338,12 @@ pub(crate) struct Opponent {
 }
 
 impl Opponent {
-    fn new(width: usize, stride: usize, size: usize) -> Self {
-        Self {
+    fn new(width: usize, stride: usize, size: usize) -> Result<Self, FlipError> {
+        Ok(Self {
             width,
             stride,
-            data: vec![0.0; size],
-        }
+            data: crate::zeros(size)?,
+        })
     }
 
     fn padding(&self) -> usize {

@@ -1,5 +1,11 @@
 use crate::{color, filters::Filters, finite, ErrorMap, FlipError, RgbImage};
 
+/// Maximum HDR exposures, including automatically resolved counts. This
+/// bounds repeated full-image evaluations while allowing up to 128 samples
+/// across HDR ranges, including the original corpus's 70-exposure stress
+/// case. Larger workloads return an error.
+pub const MAX_EXPOSURES: usize = 128;
+
 /// Tone curves applied to each exposure, as in reference `image::toneMap`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -50,7 +56,7 @@ pub struct HdrOptions {
     pub start_exposure: Option<f32>,
     /// Last exposure in stops, inclusive.
     pub stop_exposure: Option<f32>,
-    /// Number of equally spaced exposures, at least two.
+    /// Number of equally spaced exposures, from 2 through [`MAX_EXPOSURES`].
     pub num_exposures: Option<usize>,
     /// Tone curve. Defaults to ACES.
     pub tonemapper: Tonemapper,
@@ -80,7 +86,8 @@ pub struct HdrParameters {
     pub start_exposure: f32,
     /// Last exposure in stops.
     pub stop_exposure: f32,
-    /// Number of exposures evaluated.
+    /// Declared exposure count. Equal endpoints are evaluated once, retaining
+    /// this count and the earliest (zero) exposure index on ties.
     pub num_exposures: usize,
     /// Tone curve used.
     pub tonemapper: Tonemapper,
@@ -140,7 +147,9 @@ pub struct HdrResult {
 /// [`FlipError::SizeMismatch`] if the dimensions differ,
 /// [`FlipError::NonFiniteInput`] for NaN or infinite values, and
 /// [`FlipError::InvalidParameter`] for a bad `ppd`, a reversed or nonfinite
-/// exposure range, or fewer than two exposures. An all-black reference has no
+/// exposure range, or a count outside 2..=128. Filter limits are those of
+/// [`crate::ldr_flip`]. [`FlipError::Allocation`] on reservation failure.
+/// An all-black reference has no
 /// defined automatic start exposure (the reference tool exits); pass explicit
 /// endpoints to compare black images.
 pub fn hdr_flip(
@@ -155,22 +164,31 @@ pub fn hdr_flip(
     let (reference, test) = (&reference.pixels[..], &test.pixels[..]);
     finite(reference)?;
     finite(test)?;
-    let filters = Filters::new(options.ppd)?;
     let parameters = resolve(reference, options)?;
+    let filters = Filters::new(options.ppd, width, height)?;
     let mut error_map = ErrorMap {
         width,
         height,
-        pixels: vec![0.0; width * height],
+        pixels: crate::zeros(crate::dimensions(width, height, 1)?)?,
     };
-    let mut exposure_map = options.return_exposure_map.then(|| ExposureMap {
-        width,
-        height,
-        pixels: vec![0.0; width * height],
-    });
+    let mut exposure_map = if options.return_exposure_map {
+        Some(ExposureMap {
+            width,
+            height,
+            pixels: crate::zeros(crate::dimensions(width, height, 1)?)?,
+        })
+    } else {
+        None
+    };
     let step = (parameters.stop_exposure - parameters.start_exposure)
         / (parameters.num_exposures - 1) as f32;
     let mut workspace = filters.workspace(width, height)?;
-    for i in 0..parameters.num_exposures {
+    let evaluations = if parameters.start_exposure == parameters.stop_exposure {
+        1
+    } else {
+        parameters.num_exposures
+    };
+    for i in 0..evaluations {
         let exposure = parameters.start_exposure + i as f32 * step;
         let multiplier = 2.0_f32.powf(exposure); // image::expose
         let convert = |v: [f32; 3]| {
@@ -204,6 +222,14 @@ pub fn hdr_flip(
 }
 
 fn resolve(reference: &[f32], options: HdrOptions) -> Result<HdrParameters, FlipError> {
+    if options
+        .num_exposures
+        .is_some_and(|n| !(2..=MAX_EXPOSURES).contains(&n))
+    {
+        return Err(FlipError::InvalidParameter(
+            "exposure count must be between 2 and 128",
+        ));
+    }
     // image::computeExposures / evaluate exposure parameter resolution
     let (start, stop) = match (options.start_exposure, options.stop_exposure) {
         (Some(start), Some(stop)) => (start, stop),
@@ -220,12 +246,14 @@ fn resolve(reference: &[f32], options: HdrOptions) -> Result<HdrParameters, Flip
                 let d2 = (d1 * d1 - c / a).sqrt();
                 d1 + d2
             };
-            let mut luminances: Vec<f32> = reference
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .map(|p| color::luminance(*p))
-                .collect();
+            let mut luminances = crate::reserved(reference.len() / 3)?;
+            luminances.extend(
+                reference
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|p| color::luminance(*p)),
+            );
             let ymax = luminances.iter().copied().fold(-1e30_f32, f32::max);
             let median_index = luminances.len() / 2;
             let (_, median, _) = luminances.select_nth_unstable_by(median_index, f32::total_cmp);
@@ -246,9 +274,9 @@ fn resolve(reference: &[f32], options: HdrOptions) -> Result<HdrParameters, Flip
         Some(n) => n,
         None => range.ceil().max(2.0) as usize,
     };
-    if count < 2 || count > i32::MAX as usize {
+    if !(2..=MAX_EXPOSURES).contains(&count) {
         return Err(FlipError::InvalidParameter(
-            "exposure count must be between 2 and i32::MAX",
+            "exposure count must be between 2 and 128",
         ));
     }
     Ok(HdrParameters {
