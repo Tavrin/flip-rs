@@ -31,7 +31,13 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - run: cargo doc --no-deps --no-default-features
+        env:
+          RUSTDOCFLAGS: -D warnings
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
@@ -53,3 +59,28 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88
       - run: cargo check --all-features --locked
       - run: cargo check --no-default-features --locked
+
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: NVlabs/flip
+          ref: b475eb4bf394ab877c42166c9eb0a84a02cc5b14
+          path: nvlabs-flip
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Short oracle sweep
+        run: ./parity/sweep.sh --count 200
+        env:
+          FLIP_RS_REFERENCE: ${{ github.workspace }}/nvlabs-flip
+          FLIP_RS_REPORT: parity/build/sweep-ci.md
+      - name: HDR near-tie oracle regressions
+        run: cargo test --release --no-default-features --test parity hdr_near_ties_preserve_reference_exposure_indices
+        env:
+          FLIP_RS_PARITY_BIN: ${{ github.workspace }}/parity/build/reference
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parity-sweep
+          path: parity/build/sweep-ci.md
