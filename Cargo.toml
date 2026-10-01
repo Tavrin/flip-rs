@@ -35,5 +35,9 @@ image = { version = "0.25", default-features = false, features = ["png", "exr"],
 wasm-bindgen = { version = "0.2.114", optional = true }
 js-sys = { version = "0.3.91", optional = true }
 
+[[example]]
+name = "compare"
+required-features = ["image"]
+
 [package.metadata.docs.rs]
 all-features = true
