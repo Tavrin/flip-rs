@@ -39,5 +39,9 @@ js-sys = { version = "0.3.91", optional = true }
 name = "compare"
 required-features = ["image"]
 
+[[example]]
+name = "parity"
+required-features = ["image"]
+
 [package.metadata.docs.rs]
 all-features = true
