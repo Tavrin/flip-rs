@@ -2,80 +2,24 @@
 
 A Rust port of [NVIDIA FLIP](https://github.com/NVlabs/flip) v1.7, a
 perceptual metric for the difference a viewer sees when flipping between a
-reference image and a test image. FLIP produces a per-pixel error map, normally
-in 0..1, which can be pooled into statistics or shown as a Magma heatmap. It
-handles both LDR (sRGB) and HDR (linear RGB) images.
-
-This crate is an independent port and is not affiliated with or endorsed by
-NVIDIA. FLIP was designed by the authors of the papers listed under
-[References](#references); the reference implementation is NVIDIA's.
+reference and a test image. It computes LDR-FLIP for sRGB images and HDR-FLIP
+for linear RGB images, producing a per-pixel error map that can be pooled into
+statistics or rendered as a Magma heatmap.
 
 The library has no C or C++ dependencies and no `unsafe` code. With default
-features disabled it has no dependencies at all and builds for
+features disabled it has no dependencies and builds for
 `wasm32-unknown-unknown`.
 
-## Parity with the C++ reference
-
-Every case in a measured 201-case corpus is compared against NVIDIA's C++
-implementation at revision `b475eb4` (v1.7):
-
-| Corpus | Cases | Max pixel difference | Max pooled difference | Max exposure-map difference |
-|---|---:|---:|---:|---:|
-| Generated HDR | 157 | 0 | 0 | 0 |
-| Generated LDR | 21 | 0 | 0 | 0 |
-| Reference EXR | 18 | 0 | 0 | 0 |
-| Reference PNG | 5 | 0 | 0 | 0 |
-
-Pooled statistics (mean, weighted quartiles, minimum, maximum), histogram
-counts and exposure maps match exactly, and the automatically chosen exposure
-counts are equal. The randomized sweep additionally checks 3,000 seeded cases, including
-narrow and prime dimensions, random PPD and HDR exposure degeneracies. Its
-statistics and replay seeds are in [the sweep report](parity/results/sweep.md).
-Measured agreement applies to these inputs and toolchains. The harness fails
-a case above 1e-5 per pixel, 1e-6 for pooled values, exposure maps and exposure
-endpoints, or on any histogram or exposure-count mismatch. The feature
-exponent preserves the reference `powf(x, 0.5)` operation because substituting
-`sqrt` can change the winning exposure on HDR near-ties.
-
-The corpus covers all of the upstream example images, flat colors, gradients,
-edges, seeded noise, sizes from 1×1 to 1930×1080, all-black and mostly-black
-HDR images, values from 1e-20 to 1e30, PPD values of 20, 67.02 and 120, all
-three tone mappers, and explicit, automatic and partly automatic exposures.
-See [Reproducing the parity results](#reproducing-the-parity-results).
-
-## Performance
-
-Median of three runs after one warm-up, on seeded noise at the default PPD.
-HDR uses ACES with three exposures. Timings cover the comparison call
-(color conversion, tone mapping, filtering and allocation); decoding and
-pooling are excluded. The tables were refreshed after the hardening fixes,
-with C++ input restoration outside timing and fuzzing finished.
-
-| Case | C++, 1 thread (s) | Rust, 1 thread (s) | C++ / Rust | Rust, 8 threads (s) |
-|---|---:|---:|---:|---:|
-| LDR 1920×1080 | 0.697189 | 0.346759 | 2.01× | 0.203153 |
-| HDR 1920×1080 | 2.069816 | 0.798613 | 2.59× | 0.189725 |
-| LDR 3840×2160 | 3.145998 | 1.452090 | 2.17× | 0.603286 |
-| HDR 3840×2160 | 8.251707 | 3.378650 | 2.44× | 1.198722 |
-
-Measured on an AMD Ryzen 9 7945HX (16 cores) under Linux, with Rust 1.98.1 and
-GCC 13.3, using portable code generation for both (no `-march=native`, fast
-math or FMA). The C++ column is the reference built with `g++ -O2 -std=c++17`
-and OpenMP disabled. The upstream CMake build uses `-O3` and OpenMP, so the
-upstream tool on several cores is faster than this column; multi-threaded C++
-was not measured, and the 8-thread Rust column has no C++ counterpart. Your
-results will depend on hardware, image size, PPD and exposure count.
-
-The single-thread difference comes from the filter loops. They run over
-horizontally padded planes in 128-pixel tiles, which LLVM vectorizes across
-pixels while keeping each pixel's summation order the same as the reference.
-
-## Usage
+## Installation
 
 ```toml
 [dependencies]
 flip-rs = "0.1"
 ```
+
+The minimum supported Rust version is 1.88.
+
+## Usage
 
 LDR images are sRGB, as `u8` or as `f32` in 0..=1:
 
@@ -97,7 +41,7 @@ fn main() -> Result<(), flip_rs::FlipError> {
 }
 ```
 
-HDR images are linear RGB `f32`. Exposure endpoints and count are chosen from
+HDR images are linear RGB `f32`. The exposure range and count are derived from
 the reference image unless you set them:
 
 ```rust
@@ -115,11 +59,11 @@ fn main() -> Result<(), flip_rs::FlipError> {
 }
 ```
 
-`ppd` is the number of pixels per degree of visual angle. The default,
-`DEFAULT_PPD` (about 67.02), is the reference tool's: a 0.7 m wide 3840-pixel
+`ppd` is the number of pixels per degree of visual angle. `DEFAULT_PPD`
+(about 67.02) is the reference tool's default: a 0.7 m wide, 3840-pixel
 monitor viewed from 0.7 m. `pixels_per_degree` computes it for other setups.
 
-The `compare` example evaluates two files and writes a heatmap:
+The `compare` example compares two files and writes a heatmap:
 
 ```sh
 cargo run --release --features image --example compare -- reference.png test.png heatmap.png
@@ -132,17 +76,69 @@ cargo run --release --features image --example compare -- reference.exr test.exr
 |---|---|---|
 | `parallel` | yes | Processes image rows in parallel with Rayon. Results are identical with or without it. |
 | `image` | no | Adds the `io` module: PNG and OpenEXR loading and saving through the `image` crate. |
-| `wasm` | no | Exports `ldrFlip` through wasm-bindgen. |
+| `wasm` | no | On `wasm32`, exports `ldrFlip` through wasm-bindgen. |
 
-The minimum supported Rust version is 1.88.
+## Parity with the C++ reference
+
+The harness in [`parity/`](parity/README.md) runs NVIDIA's C++ implementation
+at revision `b475eb4` (v1.7) and this crate on the same `f32` inputs. On the
+201-case corpus, every output matched exactly:
+
+| Corpus | Cases | Max pixel difference | Max pooled difference | Max exposure-map difference |
+|---|---:|---:|---:|---:|
+| Generated HDR | 157 | 0 | 0 | 0 |
+| Generated LDR | 21 | 0 | 0 | 0 |
+| Reference EXR | 18 | 0 | 0 | 0 |
+| Reference PNG | 5 | 0 | 0 | 0 |
+
+Pooled statistics, histogram counts, exposure maps and the automatically
+chosen exposure ranges and counts are also equal. A seeded randomized sweep of
+3,000 cases (seed `3572951`) found no differences in its 2,974 defined cases;
+the other 26 are inputs on which the reference is undefined, listed in
+[the sweep report](parity/results/sweep.md). These results apply to the
+measured inputs and toolchains. The harness fails a case above 1e-5 per pixel
+or 1e-6 for pooled values, exposure maps and exposure endpoints, or on any
+histogram or exposure-count mismatch.
+
+The corpus covers the upstream example images, flat colors, gradients, edges
+and seeded noise from 1×1 to 1024×1024, all-black and mostly-black HDR images,
+values from 1e-20 to 1e30, PPD 20, 67.02 and 120, all three tone mappers, and
+explicit, automatic and partly automatic exposures.
+
+## Performance
+
+Median of three runs after one warm-up, on seeded noise at the default PPD.
+HDR uses ACES with three exposures. Times cover the comparison call (color
+conversion, tone mapping, filtering and allocation), not decoding or pooling.
+
+| Case | C++, 1 thread (s) | Rust, 1 thread (s) | C++ / Rust | Rust, 8 threads (s) |
+|---|---:|---:|---:|---:|
+| LDR 1920×1080 | 0.697189 | 0.346759 | 2.01× | 0.203153 |
+| HDR 1920×1080 | 2.069816 | 0.798613 | 2.59× | 0.189725 |
+| LDR 3840×2160 | 3.145998 | 1.452090 | 2.17× | 0.603286 |
+| HDR 3840×2160 | 8.251707 | 3.378650 | 2.44× | 1.198722 |
+
+Measured on an AMD Ryzen 9 7945HX (16 cores) under Linux with Rust 1.98.1 and
+GCC 13.3, without `-march=native`, fast math or FMA. The C++ column is the
+reference built with `g++ -O2 -std=c++17` and OpenMP disabled. NVIDIA's CMake
+build uses `-O3` and OpenMP, so the upstream tool will be faster than this
+column, especially on several cores. Multi-threaded C++ was not measured; the
+8-thread Rust column has no C++ counterpart. Records:
+[single-threaded](parity/results/benchmarks-single.md),
+[8 threads](parity/results/benchmarks-parallel.md),
+[environment](parity/results/qualification.md).
+
+Most of the single-thread difference comes from the filter loops, which run
+over horizontally padded planes in 128-pixel tiles. LLVM vectorizes them
+across pixels while each pixel keeps the reference's summation order.
 
 ## WebAssembly
 
 The core library builds for `wasm32-unknown-unknown` with
-`--no-default-features`. On `wasm32`, the `wasm` feature adds one JavaScript export,
-`ldrFlip(referenceRgba, testRgba, width, height, ppd)`. It takes RGBA bytes
-such as `ImageData.data`, ignores alpha, returns a `Float32Array` with one
-error per pixel, and throws an `Error` for invalid input.
+`--no-default-features`. On `wasm32`, the `wasm` feature adds one JavaScript
+export, `ldrFlip(referenceRgba, testRgba, width, height, ppd)`. It takes RGBA
+bytes such as `ImageData.data`, ignores alpha, returns a `Float32Array` with
+one error per pixel, and throws an `Error` for invalid input.
 
 To run the browser demo in `examples/web/`:
 
@@ -156,64 +152,78 @@ python3 -m http.server 8080   # then open http://localhost:8080/examples/web/
 The `wasm-bindgen` CLI version must match the `wasm-bindgen` crate version in
 `Cargo.lock`.
 
+## Limits and differences from the reference
+
+Where v1.7 has no defined result, this crate returns a `FlipError`:
+
+- An all-black HDR reference has no automatic start exposure, and the C++ tool
+  exits. Pass explicit endpoints to compare black images.
+- A very small PPD makes the reference's filter normalizers zero, producing
+  NaN. It is rejected.
+- Zero or overflowing dimensions, mismatched sizes, NaN or infinite input,
+  reversed exposure ranges and exposure counts outside 2..=128 are rejected.
+
+Resource limits that the reference does not have:
+
+- Kernels are limited to 8,193 taps (radius 4,096) and each evaluation to
+  2^34 weighted channel additions, computed from image size and PPD. Larger
+  work is rejected before allocating. Evaluation buffers are reserved
+  fallibly and return `FlipError::Allocation` on failure.
+- At most 128 exposures. This bounds repeated full-image work and still
+  covers the most extreme corpus case, which needs 70 automatic exposures.
+  Equal endpoints are evaluated once; the declared count and the earliest
+  exposure indices are kept.
+- `colorize()` returns `Result`: it checks the size of the three-channel
+  output and reserves it fallibly. Saving a raw gray map as RGB does the same.
+
+Other behaviour to be aware of:
+
+- `load_srgb` accepts only PNG and treats its channels as sRGB, with no
+  color-profile conversion. `load_linear` accepts only OpenEXR and treats its
+  channels as linear. The `compare` example rejects mixed pairs.
+- Two reference quirks are kept: the pooled maximum of an all-zero map is
+  `f32::MIN_POSITIVE`, and errors above 1 in a map built with `ErrorMap::new`
+  are left out of the histogram.
+- Pooling accumulates in `f32`, as the reference does, so large externally
+  supplied values can overflow it. `Statistics::finite` reports this; the
+  mean and weighted quartiles are then unusable, while the extrema and
+  histogram remain valid.
+- Extremely large HDR values can overflow in the tone curve. The resulting NaN
+  is clamped to 0, as in the reference.
+
 ## Reproducing the parity results
 
-The harness in `parity/` compiles a small driver against an unmodified clone
-of the reference and compares raw outputs. It is not part of the published
-crate.
+The harness compiles a small driver against an unmodified clone of the
+reference and compares raw outputs. It is not part of the published crate.
 
 ```sh
 git clone https://github.com/NVlabs/flip nvlabs-flip
 git -C nvlabs-flip checkout b475eb4bf394ab877c42166c9eb0a84a02cc5b14
 FLIP_RS_REFERENCE="$PWD/nvlabs-flip" ./parity/run.sh
+FLIP_RS_REFERENCE="$PWD/nvlabs-flip" ./parity/sweep.sh
 ```
 
-`run.sh` needs `g++` with C++17. It runs the full corpus, then the single-thread
-and 8-thread benchmarks, and writes the tables to `parity/build/`. The recorded
-results and test environment are in [`parity/results/`](parity/results/), and
-the driver's protocol is described in [`parity/README.md`](parity/README.md).
-`cargo test` runs a smaller corpus against the same driver when
-`FLIP_RS_PARITY_BIN` points to it:
+`run.sh` needs `g++` with C++17. It runs the full corpus and both benchmarks
+and writes its tables to `parity/build/`. With `FLIP_RS_PARITY_BIN` pointing
+to the compiled driver, `cargo test` also runs a smaller corpus against it:
 
 ```sh
 FLIP_RS_PARITY_BIN="$PWD/parity/build/reference" cargo test --release --test parity
 ```
 
-## Behaviour on undefined input
+See [`parity/README.md`](parity/README.md) for the driver protocol and pass
+criteria, and [`parity/results/`](parity/results/) for the recorded results.
 
-Where v1.7 has no defined result, this crate returns a `FlipError` instead:
+## Licence and credit
 
-- An all-black HDR reference has no automatic start exposure; the C++ tool
-  exits. Pass explicit endpoints to compare black images.
-- A very small PPD gives zero filter normalizers in the reference, producing
-  NaN. It is rejected.
-- Zero or overflowing dimensions, mismatched sizes, NaN or infinite input,
-  reversed exposure ranges and exposure counts outside 2..=128 are rejected.
-- Kernels are limited to 8,193 taps (radius 4,096), and each evaluation to
-  2^34 weighted channel additions, calculated from both image size and PPD.
-  Full kernels are retained for reference summation order. Excessive work is
-  rejected before allocating; internal evaluation buffers use fallible
-  reservations and return `FlipError::Allocation` on failure.
-- The 128-exposure cap bounds repeated full-image work and accommodates up to
-  128 samples across HDR ranges, including the original extreme corpus
-  requiring 70 automatic exposures; it is a Rust resource policy, not an
-  upstream limit. Equal endpoints evaluate once while keeping the declared
-  count and earliest exposure indices.
-- `colorize()` returns `Result`, checking the three-channel byte layout and
-  reserving fallibly. Raw gray-RGB saving uses the same checks.
-- `load_srgb` accepts PNG and assumes its channels are sRGB (no profile
-  transformation). `load_linear` accepts only OpenEXR and assumes linear
-  channels. Mixed pairs are rejected by the comparison example.
+BSD-3-Clause, the licence of NVIDIA FLIP. This crate is derived from NVIDIA's
+implementation, so [LICENSE](LICENSE) carries NVIDIA's copyright notice as
+well as that of the flip-rs contributors. flip-rs is an independent port; it
+is not affiliated with or endorsed by NVIDIA.
 
-Two reference quirks are kept: the pooled maximum of an all-zero map is
-`f32::MIN_POSITIVE`, and errors above 1 in a map built with `ErrorMap::new`
-are left out of the histogram. Pooling intentionally accumulates in `f32`;
-large externally supplied values can overflow it. `Statistics::finite` flags
-that condition; the mean and weighted quartiles then cannot be used, while
-extrema and histogram remain valid. Extremely large HDR values can overflow in the
-tone curve; the resulting NaN is clamped to 0, as in the reference.
-
-## References
+FLIP was designed by the authors of these papers. If you use FLIP in published
+work, cite them as the [upstream README](https://github.com/NVlabs/flip#citation)
+describes.
 
 - Pontus Andersson, Jim Nilsson, Tomas Akenine-Möller, Magnus Oskarsson, Kalle
   Åström and Mark D. Fairchild.
@@ -225,12 +235,3 @@ tone curve; the resulting NaN is clamped to 0, as in the reference.
   Eurographics 2021 Short Papers.
 - Pontus Andersson, Jim Nilsson and Tomas Akenine-Möller. Visualizing and
   Communicating Errors in Rendered Images. Ray Tracing Gems II, 2021.
-
-If you use FLIP in published work, cite these papers as the
-[upstream README](https://github.com/NVlabs/flip#citation) describes.
-
-## License
-
-BSD-3-Clause, the same licence as NVIDIA FLIP. This crate is a derivative of
-NVIDIA's implementation, so [LICENSE](LICENSE) carries NVIDIA's copyright notice
-as well as the flip-rs contributors'.

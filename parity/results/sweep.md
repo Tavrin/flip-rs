@@ -12,11 +12,11 @@ Reference: `$FLIP_RS_REFERENCE`, pinned `b475eb4bf394ab877c42166c9eb0a84a02cc5b1
 | Pooled | 0.000000000e0 | 0 |
 | Exposure map | 0.000000000e0 | 0 |
 
-Replay a random case with `./parity/sweep.sh --count 1 --case-seed SEED`; replay dedicated degeneracies with the full seed and count >= 6.
+Replay a random case with `./parity/sweep.sh --count 1 --case-seed SEED`. The first six cases are fixed probes; replay them with `--seed 3572951` and a count of at least 6. A case seed of 0 in the table means every difference was zero.
 
 ## Undefined reference inputs
 
-C++ exit 3 is a driver guard after the actual reference calculation found nonfinite pixels, before undefined float-to-integer histogram conversion. C++ exit 255 is the upstream exit(-1). Finite zero maps do not make a division by zero or zero-exposure comparison defined.
+C++ exit 3 is the driver's guard: the reference produced nonfinite pixels, and the run stops before the histogram's undefined float-to-integer conversion. Exit 255 is the reference's own `exit(-1)`. A case where the reference exits 0 with a finite map is still undefined if it divided by zero or evaluated no exposures.
 
 | Index | Case seed | Justification | Rust error | Observed C++ behavior |
 |---|---:|---|---|---|
@@ -49,11 +49,11 @@ C++ exit 3 is a driver guard after the actual reference calculation found nonfin
 
 ## Outliers
 
-None above the gates. The maximum-difference case seeds are recorded above.
+None.
 
-## Qualification binding
+## Sources and toolchain
 
-Rust base revision: `5f4d5c29a0dc40fed2bda8e1d6f6ccc1772d412e`; the measured working sources include the uncommitted hardening changes. The SHA-256 snapshot below binds those exact sources.
+Rust base revision `5f4d5c29a0dc40fed2bda8e1d6f6ccc1772d412e` plus uncommitted changes. The SHA-256 hashes below identify the measured sources and executables.
 
 - `Cargo.lock`: `4e4fc4ff20f311e0daf9a9745c8d8d3e0a9dee320be259961936d22ea6e4d0b3`
 - `Cargo.toml`: `2a7b44f5dbb2086373b00a6d3745097e38573b5ce416baa7539ae204e66c185e`
@@ -81,9 +81,8 @@ Rust base revision: `5f4d5c29a0dc40fed2bda8e1d6f6ccc1772d412e`; the measured wor
 
 ## Fixed near-tie outliers
 
-Initial sweep seeds `15158193341402106541` and `12092506619092908091`
-selected different HDR exposure indices (maximum differences 0.5 and about
-1/3), despite only 2.9802322e-8 pixel differences. Preserving reference
-`powf(x, 0.5)` fixed both; they pass in this full sweep and are permanent
-oracle regressions. No tolerance was relaxed. A maximum-difference seed of
-zero is a sentinel when every defined-case difference is zero.
+In an earlier sweep, case seeds `15158193341402106541` and
+`12092506619092908091` selected different HDR exposure indices (differences
+of 0.5 and about 1/3) while pixel differences were only 2.9802322e-8. Keeping
+the reference's `powf(x, 0.5)` instead of `sqrt` fixed both. They pass in this
+sweep, are oracle regression tests, and no tolerance was changed.

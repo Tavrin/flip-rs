@@ -1,4 +1,4 @@
-> Historical baseline before hardening. This record lacks a Rust source revision and benchmark executable hash; it does not qualify the current source. See [qualification.md](qualification.md) for current bound measurements.
+> Historical: measured before the 0.1.0 hardening changes, with no recorded Rust revision or executable hash. It does not describe the current code; see [qualification.md](qualification.md) for current measurements.
 
 # Single-thread stage profile
 

@@ -1,8 +1,7 @@
-# Hardening changes and reproductions
+# Hardening changes
 
-The implementation applies all ten accepted review findings. No commit or
-checkout operation is required. Reference qualification reads its revision and
-status with Git optional locks disabled.
+Changes made before the first release in response to review of the initial
+port, each with a reproduction and the regression test that covers it.
 
 | Library change | Reproduction / regression |
 |---|---|
@@ -13,29 +12,32 @@ status with Git optional locks disabled.
 | `load_linear` accepts only detected OpenEXR; `load_srgb` accepts only detected PNG and documents the sRGB assumption/8-bit quantization. | A PNG is rejected by the linear loader and an EXR by the sRGB loader. `png_and_exr_helpers_round_trip`; the compare example rejects mixed extension pairs before decoding. |
 | Gate the wasm module/export by both feature and `target_arch = "wasm32"`. | Native all-features builds expose no JavaScript stubs; native tests and wasm builds pass. |
 | Make the feature exponent opaque to LLVM so reference `powf(x, 0.5)` rounding is preserved. | Random seeds `15158193341402106541` and `12092506619092908091` previously differed in exposure index by 0.5 and about 1/3 despite pixel differences of only 2.98e-8. `hdr_near_ties_preserve_reference_exposure_indices` compares both seeds with the oracle. |
-| Remove the feature-dependent unresolved `io` intra-doc link and scope numerical claims to measured inputs. | Default, no-default, and nightly all-features docs under `-D warnings`; oracle corpus and sweep. |
+| Remove the `io` intra-doc link that did not resolve without the `image` feature; limit numerical claims to the measured inputs. | Docs build under `-D warnings` with default, no default and all features (nightly). |
 
-The 128-exposure cap is deliberate: 64 rejects the original valid extreme-HDR
-corpus: `hdr-extreme-17x19-20-Aces-autotrue` resolves a 69.74684-stop range
-and 70 automatic exposures. 128 retains that corpus
-(including input values up to 1e30) and still bounds the previously accepted
-billions of full-image evaluations. Rust resource policies are not classified
-as C++ undefined behavior in the sweep.
+## Exposure cap
 
-Additional harness/CI changes: `parity/sweep.sh`, `parity/check-reference.sh`,
-`parity/record.py`, the seeded Rust sweep module and C++ rejection probes;
-restoration of C++ benchmark inputs outside timing; pinned-reference 200-case
-CI sweep; default/no-default docs CI gates; source revision/snapshot and
-executable hashes in measurement records. Mocked dirty-reference and failed
-status-read probes reject with exits 1 and 128, respectively, before building.
+A cap of 64 would reject a valid corpus case:
+`hdr-extreme-17x19-20-Aces-autotrue` resolves a 69.74684-stop range and 70
+automatic exposures. 128 keeps that case, including input values up to 1e30,
+while bounding a count that previously could request billions of full-image
+evaluations. The sweep does not classify these Rust limits as reference
+undefined behaviour.
 
-Added files: `examples/sweep/mod.rs`, `parity/sweep.sh`,
-`parity/check-reference.sh`, `parity/record.py`, `fuzz/Cargo.toml`,
-`fuzz/Cargo.lock`, `fuzz/README.md`, `fuzz/fuzz_targets/common.rs`, and the five
-`fuzz/fuzz_targets/{ldr_flip,hdr_flip,pooling,colorize,image_loaders}.rs`
-targets; `parity/results/{sweep,fuzz,hardening}.md`.
+## Harness and CI changes
 
-Current verification results and source/artifact identities are in
-[qualification.md](qualification.md), [sweep.md](sweep.md) and [fuzz.md](fuzz.md).
-Historical profiles and untiled timings are retained as baselines, not current
-release evidence.
+- Added `parity/sweep.sh` with the seeded Rust sweep module
+  (`examples/sweep/mod.rs`) and C++ rejection probes.
+- Added `parity/check-reference.sh`, which rejects a reference at the wrong
+  revision or with local changes (mocked probes exit 1 and 128 before
+  building), and `parity/record.py`, which adds source and executable hashes
+  to each record.
+- C++ benchmark input restoration moved outside the timed region.
+- CI runs a 200-case sweep against the pinned reference and builds the docs
+  with default and no default features.
+- Added the `fuzz/` crate with five targets (`ldr_flip`, `hdr_flip`,
+  `pooling`, `colorize`, `image_loaders`) and the records `sweep.md`,
+  `fuzz.md` and this file.
+
+Verification results and source hashes are in
+[qualification.md](qualification.md), [sweep.md](sweep.md) and
+[fuzz.md](fuzz.md).

@@ -1,13 +1,17 @@
-| Case | C++ -O2 single thread (s) | Rust (s) | C++ / Rust |
+# Benchmarks, 8-thread Rust
+
+Rust with the `parallel` feature and `RAYON_NUM_THREADS=8`; the C++ driver is single-threaded and built with `g++ -O2 -std=c++17` without OpenMP, so the ratio column is not a like-for-like comparison. Median of three runs after one warm-up. Hardware and method: [qualification.md](qualification.md).
+
+| Case | C++ -O2, 1 thread (s) | Rust, 8 threads (s) | C++ 1 thread / Rust 8 threads |
 |---|---:|---:|---:|
 | LDR 1920×1080 | 0.749002 | 0.203153 | 3.69× |
 | HDR ACES, 3 exposures 1920×1080 | 2.204883 | 0.189725 | 11.62× |
 | LDR 3840×2160 | 3.587212 | 0.603286 | 5.95× |
 | HDR ACES, 3 exposures 3840×2160 | 8.499755 | 1.198722 | 7.09× |
 
-## Qualification binding
+## Sources and toolchain
 
-Rust base revision: `5f4d5c29a0dc40fed2bda8e1d6f6ccc1772d412e`; the measured working sources include the uncommitted hardening changes. The SHA-256 snapshot below binds those exact sources.
+Rust base revision `5f4d5c29a0dc40fed2bda8e1d6f6ccc1772d412e` plus uncommitted changes. The SHA-256 hashes below identify the measured sources and executables.
 
 - `Cargo.lock`: `4e4fc4ff20f311e0daf9a9745c8d8d3e0a9dee320be259961936d22ea6e4d0b3`
 - `Cargo.toml`: `2a7b44f5dbb2086373b00a6d3745097e38573b5ce416baa7539ae204e66c185e`

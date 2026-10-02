@@ -1,3 +1,7 @@
+# Corpus parity
+
+201 cases, run by `parity/run.sh` against NVIDIA FLIP at `b475eb4bf394ab877c42166c9eb0a84a02cc5b14`. Both sides read the same `f32` inputs. Pass criteria and corpus contents: [parity/README.md](../README.md).
+
 | Corpus | Cases | Max pixel difference | Max pooled difference | Max exposure-map difference |
 |---|---:|---:|---:|---:|
 | Generated HDR | 157 | 0.000000000e0 | 0.000000000e0 | 0.000000000e0 |
@@ -5,9 +9,9 @@
 | Reference EXR | 18 | 0.000000000e0 | 0.000000000e0 | 0.000000000e0 |
 | Reference PNG | 5 | 0.000000000e0 | 0.000000000e0 | 0.000000000e0 |
 
-## Qualification binding
+## Sources and toolchain
 
-Rust base revision: `5f4d5c29a0dc40fed2bda8e1d6f6ccc1772d412e`; the measured working sources include the uncommitted hardening changes. The SHA-256 snapshot below binds those exact sources.
+Rust base revision `5f4d5c29a0dc40fed2bda8e1d6f6ccc1772d412e` plus uncommitted changes. The SHA-256 hashes below identify the measured sources and executables.
 
 - `Cargo.lock`: `4e4fc4ff20f311e0daf9a9745c8d8d3e0a9dee320be259961936d22ea6e4d0b3`
 - `Cargo.toml`: `2a7b44f5dbb2086373b00a6d3745097e38573b5ce416baa7539ae204e66c185e`
