@@ -68,6 +68,16 @@ maximum absolute difference is at most 1e-5 per pixel and 1e-6 for pooled
 statistics, exposure maps and exposure endpoints, and if histogram counts and
 exposure counts are equal.
 
+Each map also compares weighted and unweighted percentiles at 0, 0.01, 0.25,
+0.5, 0.75, 0.9, 0.95, 0.99 and 0.999, plus the largest defined `f32` fraction
+below 1 for each weighting. The weighted limit is the predecessor of 1;
+the unweighted limit depends on map size and is found using the reference's
+`f32` index arithmetic (zero on a one-pixel map). The driver marks undefined
+unweighted indices without calling the C++ method there; Rust must reject
+those queries. The harness requires bit-identical percentiles when pooling
+the C++ map in Rust, and at most 1e-6 difference when pooling the separately
+evaluated Rust map. Reports record query counts, rejected indices and maxima.
+
 ## Driver protocol
 
 The driver takes tightly packed little-endian `f32` RGB files:
@@ -80,12 +90,14 @@ and writes:
 
 | Field | Type |
 |---|---|
-| Magic `0x464c1737` | u32 |
+| Magic `0x464c1738` | u32 |
 | Resolved start and stop exposure (zero for LDR) | 2 × f32 |
 | Exposure count (zero for LDR) | u32 |
 | Median evaluation time in seconds | f64 |
 | Mean, weighted median, weighted first and third quartiles, min, max | 6 × f32 |
 | Histogram | 100 × u64 |
+| Percentile query count (10) | u32 |
+| Per query: weighted fraction, unweighted fraction, weighted value, unweighted defined flag (0 or 1), unweighted value (zero if undefined) | 3 × f32, u32, f32 |
 | Error map | WIDTH × HEIGHT × f32 |
 | Exposure map (HDR only) | WIDTH × HEIGHT × f32 |
 

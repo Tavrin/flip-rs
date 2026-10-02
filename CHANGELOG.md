@@ -4,7 +4,20 @@ All notable changes to this project are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses [Semantic Versioning](https://semver.org/).
 
-## [0.1.1] - Unreleased
+## [0.1.2] - Unreleased
+
+### Added
+
+- `ErrorMap::percentile(p, Weighting)` for arbitrary weighted and unweighted
+  percentiles matching the FLIP v1.7 reference.
+- `ErrorMap::percentiles()` returns a `Percentiles` value that sorts once
+  for repeated queries. Invalid fractions and undefined unweighted indices
+  return `FlipError::InvalidParameter`.
+- Corpus and randomized parity checks for ten fractions with both
+  weightings, including each map's largest defined fraction below one.
+  Percentile pooling is checked bit for bit on the C++ error maps.
+
+## [0.1.1] - 2026-10-02
 
 Documentation and metadata only. The library code is unchanged.
 
@@ -67,5 +80,6 @@ initial port. Some change behaviour that earlier development builds had.
 - Benchmarks exclude C++ input restoration from timing, and the recorded
   results include source and executable hashes.
 
-[0.1.1]: https://github.com/Tavrin/flip-rs/compare/v0.1.0...HEAD
+[0.1.2]: https://github.com/Tavrin/flip-rs/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Tavrin/flip-rs/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Tavrin/flip-rs/releases/tag/v0.1.0

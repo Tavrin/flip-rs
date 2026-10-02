@@ -70,25 +70,41 @@ fn main() -> Result<()> {
         }
     } else {
         let mut groups = std::collections::BTreeMap::<&str, (usize, f32, f32, f32)>::new();
+        let mut percentile_counts = [0; 3];
+        let mut percentile_differences = [0.0_f32; 2];
         for case in corpus(true)? {
             let r = case.rust()?;
             let c = oracle.cpp(&case, 1)?;
-            let (pixels, stats, exposure) =
+            let (pixels, stats, exposure, percentiles) =
                 compare(&r, &c).map_err(|e| format!("{}: {e}", case.name))?;
+            for (dst, count) in percentile_counts
+                .iter_mut()
+                .zip(support::percentile_counts(&c.percentiles))
+            {
+                *dst += count;
+            }
+            for (dst, difference) in percentile_differences.iter_mut().zip(percentiles) {
+                *dst = dst.max(difference);
+            }
             let group = groups.entry(case.group).or_default();
             group.0 += 1;
             group.1 = group.1.max(pixels);
             group.2 = group.2.max(stats);
             group.3 = group.3.max(exposure);
             println!(
-                "PASS {} pixel={pixels:e} pooled={stats:e} exposure={exposure:e}",
+                "PASS {} pixel={pixels:e} pooled={stats:e} exposure={exposure:e} percentiles={percentiles:?}",
                 case.name
             );
         }
+        report.push_str(&format!("# Corpus parity\n\n{} cases against NVIDIA FLIP at `b475eb4bf394ab877c42166c9eb0a84a02cc5b14`. Both sides read the same `f32` inputs. Pass criteria and corpus contents: [parity/README.md](../README.md).\n\n", percentile_counts[0] / 10));
         report.push_str("| Corpus | Cases | Max pixel difference | Max pooled difference | Max exposure-map difference |\n|---|---:|---:|---:|---:|\n");
         for (name, (n, p, s, e)) in groups {
             report.push_str(&format!("| {name} | {n} | {p:.9e} | {s:.9e} | {e:.9e} |\n"));
         }
+        report.push_str(&support::percentile_report(
+            percentile_counts,
+            percentile_differences,
+        ));
         print!("{report}");
     }
     std::fs::write(out, report)?;

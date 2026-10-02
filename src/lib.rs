@@ -84,7 +84,7 @@ pub use hdr::{
     hdr_flip, ExposureMap, HdrOptions, HdrParameters, HdrResult, Tonemapper, MAX_EXPOSURES,
 };
 pub use magma::MAGMA;
-pub use pooling::{Histogram, Statistics};
+pub use pooling::{Histogram, Percentiles, Statistics, Weighting};
 
 /// The reference tool's default pixels per degree, about 67.02: a 0.7 m wide
 /// monitor with 3840 horizontal pixels, viewed from 0.7 m.
@@ -302,6 +302,45 @@ impl ErrorMap {
     /// before using the mean or quartiles.
     pub fn statistics(&self) -> Statistics {
         pooling::statistics(&self.pixels)
+    }
+    /// Copies and sorts this map once for repeated percentile queries.
+    ///
+    /// The original map is unchanged. See [`Percentiles::percentile`] for
+    /// weighted and unweighted reference semantics.
+    ///
+    /// # Errors
+    ///
+    /// [`FlipError::InvalidDimensions`] for an empty map (which
+    /// [`ErrorMap::new`] already rejects), or [`FlipError::Allocation`] if
+    /// the sorted copy cannot be reserved.
+    pub fn percentiles(&self) -> Result<Percentiles, FlipError> {
+        Percentiles::new(&self.pixels)
+    }
+    /// Returns a percentile at the fraction `p` in `0..=1`.
+    ///
+    /// See [`Percentiles::percentile`] for the reference's weighted scan and
+    /// zero-based unweighted index, including the fallback to zero.
+    /// This one-shot call copies and sorts the map. For several queries,
+    /// use [`Self::percentiles`] once and query the returned value.
+    ///
+    /// # Errors
+    ///
+    /// [`FlipError::InvalidParameter`] for NaN, infinite or out-of-range
+    /// `p`, or an out-of-bounds unweighted index (usually at `p = 1`).
+    /// [`FlipError::InvalidDimensions`] for an empty map, or
+    /// [`FlipError::Allocation`] if the sorted copy cannot be reserved.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use flip_rs::{ErrorMap, Weighting::Weighted};
+    /// let errors = ErrorMap::new(3, 1, vec![0.0, 0.1, 0.4])?;
+    /// assert_eq!(errors.percentile(0.99, Weighted)?, 0.4);
+    /// # Ok::<(), flip_rs::FlipError>(())
+    /// ```
+    pub fn percentile(&self, p: f32, weighting: Weighting) -> Result<f32, FlipError> {
+        pooling::validate_percentile(p)?;
+        self.percentiles()?.percentile(p, weighting)
     }
     /// Maps each error to the [`MAGMA`] colormap, returning sRGB floats.
     ///

@@ -1,5 +1,6 @@
 use flip_rs::{
     hdr_flip, ldr_flip, pixels_per_degree, ErrorMap, FlipError, HdrOptions, RgbImage, Tonemapper,
+    Weighting::{Unweighted, Weighted},
     DEFAULT_PPD, MAGMA,
 };
 
@@ -107,6 +108,115 @@ fn reference_pooling_and_magma_rounding() {
     );
     assert_eq!(map.statistics().histogram.counts[99], 1);
     assert_eq!(map.statistics().histogram.out_of_range, 1);
+}
+
+#[test]
+fn arbitrary_percentiles_keep_reference_index_and_strict_weighted_threshold() {
+    let map = ErrorMap::new(5, 1, vec![0.4, 0.0, 0.3, 0.1, 0.2]).unwrap();
+    let pooled = map.percentiles().unwrap();
+    for (p, weighted, unweighted) in [
+        (0.0, 0.1_f32, 0.0_f32),
+        (0.01, 0.1, 0.1),
+        (0.25, 0.2, 0.2),
+        (0.5, 0.3, 0.3),
+        (0.75, 0.4, 0.4),
+        (0.8, 0.4, 0.4),
+    ] {
+        for (weighting, expected) in [(Weighted, weighted), (Unweighted, unweighted)] {
+            assert_eq!(
+                pooled.percentile(p, weighting).unwrap().to_bits(),
+                expected.to_bits()
+            );
+            assert_eq!(
+                map.percentile(p, weighting).unwrap().to_bits(),
+                expected.to_bits()
+            );
+        }
+    }
+    assert_eq!(pooled.percentile(0.99, Weighted).unwrap(), 0.4);
+    assert_eq!(pooled.percentile(1.0, Weighted).unwrap(), 0.0);
+    let tied = ErrorMap::new(4, 1, vec![0.0, 0.25, 0.25, 0.5]).unwrap();
+    assert_eq!(tied.percentile(0.5, Weighted).unwrap(), 0.5);
+    assert_eq!(map.pixels(), &[0.4, 0.0, 0.3, 0.1, 0.2]);
+    let zero = ErrorMap::new(1, 1, vec![0.0]).unwrap();
+    for p in [0.0, 0.99, 1.0] {
+        assert_eq!(
+            zero.percentile(p, Weighted).unwrap().to_bits(),
+            0.0_f32.to_bits()
+        );
+    }
+    assert_eq!(zero.percentile(0.0, Unweighted).unwrap(), 0.0);
+    // The total must keep row-major rounding, rather than be re-summed sorted.
+    let rounded = ErrorMap::new(3, 1, vec![1e8, 4.0, 4.0]).unwrap();
+    assert_eq!(rounded.percentile(1.0, Weighted).unwrap(), 1e8);
+    let overflow = ErrorMap::new(2, 1, vec![f32::MAX; 2]).unwrap();
+    for p in [0.0, 0.5, 1.0] {
+        assert_eq!(overflow.percentile(p, Weighted).unwrap(), 0.0);
+    }
+}
+
+#[test]
+fn percentile_queries_reject_invalid_fractions_and_undefined_indices() {
+    let map = ErrorMap::new(3, 1, vec![0.1, 0.2, 0.3]).unwrap();
+    let pooled = map.percentiles().unwrap();
+    for p in [-0.1, 1.01, f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
+        for weighting in [Weighted, Unweighted] {
+            assert!(matches!(
+                map.percentile(p, weighting),
+                Err(FlipError::InvalidParameter(_))
+            ));
+            assert!(matches!(
+                pooled.percentile(p, weighting),
+                Err(FlipError::InvalidParameter(_))
+            ));
+        }
+    }
+    // f32 multiplication rounds (2/3)*3 to exactly 2; its successor rounds above 2.
+    let last = 2.0_f32 / 3.0;
+    assert_eq!(pooled.percentile(last, Unweighted).unwrap(), 0.3);
+    for p in [f32::from_bits(last.to_bits() + 1), 0.9, 0.99, 1.0] {
+        assert!(matches!(
+            map.percentile(p, Unweighted),
+            Err(FlipError::InvalidParameter(_))
+        ));
+        assert!(matches!(
+            pooled.percentile(p, Unweighted),
+            Err(FlipError::InvalidParameter(_))
+        ));
+    }
+    let single = ErrorMap::new(1, 1, vec![0.2]).unwrap();
+    assert!(matches!(
+        single.percentile(f32::from_bits(1), Unweighted),
+        Err(FlipError::InvalidParameter(_))
+    ));
+    assert!(matches!(
+        ErrorMap::new(0, 1, vec![]),
+        Err(FlipError::InvalidDimensions)
+    ));
+}
+
+#[test]
+fn arbitrary_weighted_quartiles_match_statistics_bit_for_bit() {
+    for values in [
+        vec![0.0],
+        vec![0.4, 0.0, 0.3, 0.1, 0.2],
+        vec![1e8, 4.0, 4.0],
+        vec![f32::MAX; 2],
+    ] {
+        let map = ErrorMap::new(values.len(), 1, values).unwrap();
+        let stats = map.statistics();
+        let pooled = map.percentiles().unwrap();
+        for (p, expected) in [
+            (0.25, stats.first_quartile),
+            (0.5, stats.weighted_median),
+            (0.75, stats.third_quartile),
+        ] {
+            assert_eq!(
+                pooled.percentile(p, Weighted).unwrap().to_bits(),
+                expected.to_bits()
+            );
+        }
+    }
 }
 
 #[test]

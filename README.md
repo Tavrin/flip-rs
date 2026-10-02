@@ -43,8 +43,7 @@ images with the WebAssembly build. Images stay on your machine.
 [`nv-flip`](https://crates.io/crates/nv-flip) provides Rust bindings to
 NVIDIA's C++ implementation. Because it runs NVIDIA's own code, its results
 are authoritative by construction, and it is the right choice if you need
-NVIDIA's binary rather than a port. It also offers arbitrary weighted
-percentiles, where flip-rs reports the quartiles and the histogram. Its last
+NVIDIA's binary rather than a port. Its last
 release (0.1.2, July 2023) bundles the C++ sources from before v1.3 and
 supports LDR-FLIP only. It compiles C++ at build time, so it needs a C++
 compiler; wgpu's test suite, which uses it, disables it on wasm.
@@ -83,6 +82,32 @@ fn main() -> Result<(), flip_rs::FlipError> {
     Ok(())
 }
 ```
+
+Arbitrary percentiles use a fraction in `0..=1`. For a weighted 99th
+percentile, as used by wgpu's image comparisons:
+
+```rust
+use flip_rs::{ErrorMap, Weighting::Weighted};
+
+fn main() -> Result<(), flip_rs::FlipError> {
+    let error_map = ErrorMap::new(3, 1, vec![0.0, 0.1, 0.4])?;
+    let p99 = error_map.percentile(0.99, Weighted)?;
+    assert_eq!(p99, 0.4);
+
+    // Copy and sort once when querying several percentiles.
+    let pooled = error_map.percentiles()?;
+    let p95 = pooled.percentile(0.95, Weighted)?;
+    assert_eq!(p95, p99);
+    Ok(())
+}
+```
+
+`Weighting::Weighted` returns the first sorted error whose running sum is
+strictly greater than `p` times the total error, or zero if none qualifies.
+`Weighting::Unweighted` uses the reference's zero-based
+`ceil((count as f32) * p)` index. See the limits below for invalid indices.
+The reusable `Percentiles` value owns a sorted copy; queries do not sort or
+allocate again. Weighted queries scan it, and unweighted queries index it.
 
 HDR images are linear RGB `f32`. The exposure range and count are derived from
 the reference image unless you set them:
@@ -221,6 +246,13 @@ Where v1.7 has no defined result, this crate returns a `FlipError`:
   NaN. It is rejected.
 - Zero or overflowing dimensions, mismatched sizes, NaN or infinite input,
   reversed exposure ranges and exposure counts outside 2..=128 are rejected.
+- Percentile fractions that are NaN, infinite or outside `0..=1` return
+  `FlipError::InvalidParameter`. Unweighted queries also return that error
+  when `ceil((count as f32) * p)` is out of bounds: usually at `p = 1`, and
+  sometimes below it. Counts that cannot be represented exactly in `f32`
+  retain the reference's rounding. For three pixels, `p = 0.99` is out of bounds;
+  for one pixel, only `p = 0` is defined. Indices are not clamped. Empty maps
+  return `FlipError::InvalidDimensions` and cannot be constructed publicly.
 
 Resource limits that the reference does not have:
 
@@ -246,7 +278,11 @@ Other behaviour to be aware of:
 - Pooling accumulates in `f32`, as the reference does, so large externally
   supplied values can overflow it. `Statistics::finite` reports this; the
   mean and weighted quartiles are then unusable, while the extrema and
-  histogram remain valid.
+  histogram remain valid. Arbitrary weighted percentiles retain that same
+  arithmetic and return zero when no running sum exceeds the threshold.
+  Weighted `p = 1` is defined: it often returns zero, but rounding can make
+  the sorted running sum exceed the row-major total. All-zero maps return
+  zero at every weighted percentile.
 - Extremely large HDR values can overflow in the tone curve. The resulting NaN
   is clamped to 0, as in the reference.
 

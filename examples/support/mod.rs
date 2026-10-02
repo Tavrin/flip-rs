@@ -1,4 +1,7 @@
-use flip_rs::{hdr_flip, ldr_flip, ErrorMap, HdrOptions, RgbImage, Tonemapper, DEFAULT_PPD};
+use flip_rs::{
+    hdr_flip, ldr_flip, ErrorMap, FlipError, HdrOptions, RgbImage, Tonemapper, Weighting,
+    DEFAULT_PPD,
+};
 use std::{
     error::Error,
     path::{Path, PathBuf},
@@ -35,9 +38,67 @@ pub struct Case {
 }
 pub struct Output {
     pub map: ErrorMap,
+    pub percentiles: Vec<PercentileSample>,
     pub exposure: Option<Vec<f32>>,
     pub used: Option<(f32, f32, usize)>,
     pub seconds: f64,
+}
+
+pub struct PercentileSample {
+    pub fractions: [f32; 2],
+    pub values: [Option<f32>; 2],
+}
+
+fn largest_defined_percentile(n: usize) -> f32 {
+    let (mut low, mut high) = (0_u32, 1.0_f32.to_bits() - 1);
+    while low < high {
+        let mid = low + (high - low).div_ceil(2);
+        if ((n as f32 * f32::from_bits(mid)).ceil() as usize) < n {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    f32::from_bits(low)
+}
+
+fn percentile_samples(map: &ErrorMap) -> Result<Vec<PercentileSample>> {
+    let pooled = map.percentiles()?;
+    let mut samples = Vec::new();
+    for p in [0.0, 0.01, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999]
+        .into_iter()
+        .map(|p| [p, p])
+        .chain(std::iter::once([
+            f32::from_bits(1.0_f32.to_bits() - 1),
+            largest_defined_percentile(map.pixels().len()),
+        ]))
+    {
+        let unweighted = match pooled.percentile(p[1], Weighting::Unweighted) {
+            Ok(value) => Some(value),
+            Err(FlipError::InvalidParameter(_)) => None,
+            Err(e) => return Err(e.into()),
+        };
+        samples.push(PercentileSample {
+            fractions: p,
+            values: [
+                Some(pooled.percentile(p[0], Weighting::Weighted)?),
+                unweighted,
+            ],
+        });
+    }
+    Ok(samples)
+}
+
+pub fn percentile_counts(samples: &[PercentileSample]) -> [usize; 3] {
+    [
+        samples.len(),
+        samples.iter().filter(|s| s.values[1].is_some()).count(),
+        samples.iter().filter(|s| s.values[1].is_none()).count(),
+    ]
+}
+
+pub fn percentile_report(counts: [usize; 3], differences: [f32; 2]) -> String {
+    format!("\n## Percentile parity\n\nFractions: 0, 0.01, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999, and the largest defined f32 below 1 for each weighting and map size. Unweighted queries with out-of-bounds indices are checked for Rust errors; C++ is not called at those indices.\n\n| Weighting | Bit-identical queries on C++ maps | Undefined queries rejected | Max difference between Rust and C++ maps |\n|---|---:|---:|---:|\n| Weighted | {} | 0 | {:.9e} |\n| Unweighted | {} | {} | {:.9e} |\n", counts[0], differences[0], counts[1], counts[2], differences[1])
 }
 impl Case {
     pub fn rust(&self) -> Result<Output> {
@@ -49,6 +110,7 @@ impl Case {
             let result = hdr_flip(&r, &t, options)?;
             let seconds = start.elapsed().as_secs_f64();
             Ok(Output {
+                percentiles: percentile_samples(&result.error_map)?,
                 map: result.error_map,
                 exposure: result.exposure_map.map(|m| m.into_pixels()),
                 used: Some((
@@ -60,11 +122,13 @@ impl Case {
             })
         } else {
             let map = ldr_flip(&r, &t, self.ppd)?;
+            let seconds = start.elapsed().as_secs_f64();
             Ok(Output {
+                percentiles: percentile_samples(&map)?,
                 map,
                 exposure: None,
                 used: None,
-                seconds: start.elapsed().as_secs_f64(),
+                seconds,
             })
         }
     }
@@ -157,7 +221,7 @@ impl Oracle {
         }
         let bytes = std::fs::read(out)?;
         let n = case.w * case.h;
-        let expected = 848 + 4 * n * if case.options.is_some() { 2 } else { 1 };
+        let expected = 1052 + 4 * n * if case.options.is_some() { 2 } else { 1 };
         if bytes.len() != expected {
             return Err(format!("oracle output size {}, expected {expected}", bytes.len()).into());
         }
@@ -167,7 +231,7 @@ impl Oracle {
             cursor += len;
             &bytes[start..cursor]
         };
-        if u32::from_le_bytes(take(4).try_into()?) != 0x464c1737 {
+        if u32::from_le_bytes(take(4).try_into()?) != 0x464c1738 {
             return Err("oracle magic mismatch".into());
         }
         let start = f32::from_le_bytes(take(4).try_into()?);
@@ -180,6 +244,26 @@ impl Oracle {
         let counts = (0..100)
             .map(|_| Ok(u64::from_le_bytes(take(8).try_into()?) as usize))
             .collect::<Result<Vec<_>>>()?;
+        if u32::from_le_bytes(take(4).try_into()?) != 10 {
+            return Err("oracle percentile count mismatch".into());
+        }
+        let mut percentiles = Vec::new();
+        for _ in 0..10 {
+            let fractions = [
+                f32::from_le_bytes(take(4).try_into()?),
+                f32::from_le_bytes(take(4).try_into()?),
+            ];
+            let weighted = f32::from_le_bytes(take(4).try_into()?);
+            let defined = u32::from_le_bytes(take(4).try_into()?);
+            let unweighted = f32::from_le_bytes(take(4).try_into()?);
+            if defined > 1 || (defined == 0 && unweighted.to_bits() != 0) {
+                return Err("oracle percentile status mismatch".into());
+            }
+            percentiles.push(PercentileSample {
+                fractions,
+                values: [Some(weighted), (defined == 1).then_some(unweighted)],
+            });
+        }
         let pixels = (0..n)
             .map(|_| Ok(f32::from_le_bytes(take(4).try_into()?)))
             .collect::<Result<Vec<_>>>()?;
@@ -188,6 +272,20 @@ impl Oracle {
         let pooled = map.statistics();
         if stats != stats_array(&map) || counts != pooled.histogram.counts {
             return Err("oracle pooling or histogram disagrees with map".into());
+        }
+        // The percentile API must be bit-identical on the exact C++ map,
+        // independently of tolerances on the Rust evaluator's error pixels.
+        let actual = percentile_samples(&map)?;
+        for (r, c) in actual.iter().zip(&percentiles) {
+            if r.fractions.map(f32::to_bits) != c.fractions.map(f32::to_bits)
+                || r.values.map(|v| v.map(f32::to_bits)) != c.values.map(|v| v.map(f32::to_bits))
+            {
+                return Err(format!(
+                    "oracle percentile disagrees with map at {:?}: Rust {:?}, C++ {:?}",
+                    c.fractions, r.values, c.values
+                )
+                .into());
+            }
         }
         let exposure = if case.options.is_some() {
             Some(
@@ -200,6 +298,7 @@ impl Oracle {
         };
         Ok(Probe::Output(Output {
             map,
+            percentiles,
             exposure,
             used: case.options.map(|_| (start, stop, count)),
             seconds,
@@ -224,7 +323,7 @@ pub fn stats_array(map: &ErrorMap) -> Vec<f32> {
     ]
 }
 
-pub fn compare(r: &Output, c: &Output) -> Result<(f32, f32, f32)> {
+pub fn compare(r: &Output, c: &Output) -> Result<(f32, f32, f32, [f32; 2])> {
     let max_diff = |a: &[f32], b: &[f32]| -> Result<f32> {
         if a.len() != b.len() {
             return Err("length mismatch".into());
@@ -240,6 +339,22 @@ pub fn compare(r: &Output, c: &Output) -> Result<(f32, f32, f32)> {
     };
     let pixels = max_diff(r.map.pixels(), c.map.pixels())?;
     let stats = max_diff(&stats_array(&r.map), &stats_array(&c.map))?;
+    if r.percentiles.len() != c.percentiles.len() {
+        return Err("percentile count mismatch".into());
+    }
+    let mut percentiles = [0.0_f32; 2];
+    for (r, c) in r.percentiles.iter().zip(&c.percentiles) {
+        if r.fractions.map(f32::to_bits) != c.fractions.map(f32::to_bits) {
+            return Err("percentile fraction mismatch".into());
+        }
+        for (i, (r, c)) in r.values.into_iter().zip(c.values).enumerate() {
+            match (r, c) {
+                (Some(r), Some(c)) => percentiles[i] = percentiles[i].max(max_diff(&[r], &[c])?),
+                (None, None) => {}
+                _ => return Err("percentile definedness mismatch".into()),
+            }
+        }
+    }
     let exposure = match (&r.exposure, &c.exposure) {
         (Some(r), Some(c)) => max_diff(r, c)?,
         (None, None) => 0.0,
@@ -255,13 +370,13 @@ pub fn compare(r: &Output, c: &Output) -> Result<(f32, f32, f32)> {
     if r.map.statistics().histogram != c.map.statistics().histogram {
         return Err("histogram count mismatch".into());
     }
-    if pixels > 1e-5 || stats > 1e-6 || exposure > 1e-6 {
+    if pixels > 1e-5 || stats > 1e-6 || exposure > 1e-6 || percentiles.iter().any(|&p| p > 1e-6) {
         return Err(format!(
-            "parity failure: pixels={pixels:e}, stats={stats:e}, exposure={exposure:e}"
+            "parity failure: pixels={pixels:e}, stats={stats:e}, exposure={exposure:e}, percentiles={percentiles:?}"
         )
         .into());
     }
-    Ok((pixels, stats, exposure))
+    Ok((pixels, stats, exposure, percentiles))
 }
 
 pub fn generated(kind: &str, w: usize, h: usize, hdr: bool) -> (Vec<f32>, Vec<f32>) {

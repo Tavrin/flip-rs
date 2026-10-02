@@ -186,7 +186,8 @@ pub fn run() -> Result<()> {
     let isolated = value("--case-seed").map(str::parse::<u64>).transpose()?;
     let oracle = Oracle::new(std::env::var("FLIP_RS_PARITY_BIN")?)?;
     let mut random = Random(seed);
-    let mut maxima = [(0.0_f32, 0_u64); 3];
+    let mut maxima = [(0.0_f32, 0_u64); 5];
+    let mut percentile_counts = [0; 3];
     let mut passed = 0;
     let mut failures = Vec::new();
     let mut undefined = Vec::new();
@@ -213,9 +214,18 @@ pub fn run() -> Result<()> {
         let cpp = oracle.probe(&c, 1)?;
         match (rust, cpp) {
             (Ok(r), Probe::Output(cpp)) if reason.is_none() => match compare(&r, &cpp) {
-                Ok((p, s, e)) => {
+                Ok((p, s, e, percentiles)) => {
                     passed += 1;
-                    for (dst, v) in maxima.iter_mut().zip([p, s, e]) {
+                    for (dst, count) in percentile_counts
+                        .iter_mut()
+                        .zip(super::support::percentile_counts(&cpp.percentiles))
+                    {
+                        *dst += count;
+                    }
+                    for (dst, v) in maxima
+                        .iter_mut()
+                        .zip([p, s, e, percentiles[0], percentiles[1]])
+                    {
                         if v > dst.0 {
                             *dst = (v, case_seed);
                         }
@@ -279,9 +289,22 @@ pub fn run() -> Result<()> {
         }
     }
     let mut report = format!("# Randomized parity sweep\n\nSeed: `{seed}` (SplitMix64); cases: **{count}**; parity passes: **{passed}**; documented undefined cases: **{}**; failures: **{}**.\n\nLDR: {}; HDR: {}; one-dimensional: {}; maximum width/height: {} / {}.\n\nReference: `$FLIP_RS_REFERENCE`, pinned `b475eb4bf394ab877c42166c9eb0a84a02cc5b14`; clean checkout required. Inputs are shared raw f32 buffers. Gates: pixels <= 1e-5, pooled/exposure/endpoints <= 1e-6, exact histograms and exposure counts.\n\n| Difference | Maximum | Case seed |\n|---|---:|---:|\n", undefined.len(), failures.len(), coverage[0], coverage[1], coverage[2], shape_max.0, shape_max.1);
-    for (name, (v, seed)) in ["Pixel", "Pooled", "Exposure map"].into_iter().zip(maxima) {
+    for (name, (v, seed)) in [
+        "Pixel",
+        "Pooled",
+        "Exposure map",
+        "Weighted percentile",
+        "Unweighted percentile",
+    ]
+    .into_iter()
+    .zip(maxima)
+    {
         report.push_str(&format!("| {name} | {v:.9e} | {seed} |\n"));
     }
+    report.push_str(&super::support::percentile_report(
+        percentile_counts,
+        [maxima[3].0, maxima[4].0],
+    ));
     report.push_str("\nReplay a random case with `./parity/sweep.sh --count 1 --case-seed SEED`; replay dedicated degeneracies with the full seed and count >= 6.\n\n## Undefined reference inputs\n\nC++ exit 3 is a driver guard after the actual reference calculation found nonfinite pixels, before undefined float-to-integer histogram conversion. C++ exit 255 is the upstream exit(-1). Finite zero maps do not make a division by zero or zero-exposure comparison defined.\n\n| Index | Case seed | Justification | Rust error | Observed C++ behavior |\n|---|---:|---|---|---|\n");
     for row in undefined {
         report.push_str(&row);

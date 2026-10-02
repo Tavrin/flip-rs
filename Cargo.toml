@@ -1,6 +1,6 @@
 [package]
 name = "flip-rs"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.88"
 description = "Rust port of NVIDIA FLIP v1.7, a perceptual image-difference metric for LDR and HDR images"

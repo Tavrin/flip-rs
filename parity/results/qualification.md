@@ -1,5 +1,10 @@
 # Qualification record
 
+The corpus and sweep records linked below now include arbitrary percentiles
+for 0.1.2. [Percentile qualification](percentiles.md) records the current
+checks and query counts. The benchmarks, fuzzing and verification table here
+retain the earlier 0.1.0 measurements.
+
 Measured 2026-10-02 against a clean NVIDIA FLIP v1.7 checkout at
 `b475eb4bf394ab877c42166c9eb0a84a02cc5b14` (`$FLIP_RS_REFERENCE`). The Rust
 sources were base revision `5f4d5c29a0dc40fed2bda8e1d6f6ccc1772d412e` plus the

@@ -4,6 +4,7 @@
 #include "tool/pooling.h"
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <stdexcept>
 
 template<class T> void write(std::ofstream& out, T value) {
@@ -15,6 +16,22 @@ std::vector<float> read(const char* path, size_t n) {
     in.read(reinterpret_cast<char*>(v.data()), n * sizeof(float));
     if (!in || in.peek() != std::char_traits<char>::eof()) throw std::runtime_error("input length mismatch");
     return v;
+}
+float fromBits(uint32_t bits) {
+    float value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+// Search positive f32 values below 1. Never invoke the reference at an
+// out-of-bounds unweighted index, including on one-pixel maps.
+float largestDefinedPercentile(size_t n) {
+    uint32_t low = 0, high = 0x3f7fffff;
+    while (low < high) {
+        uint32_t mid = low + (high - low + 1) / 2;
+        if (size_t(std::ceil(n * fromBits(mid))) < n) low = mid;
+        else high = mid - 1;
+    }
+    return fromBits(low);
 }
 int main(int argc, char** argv) {
     try {
@@ -65,7 +82,7 @@ int main(int argc, char** argv) {
         std::ofstream out(argv[11], std::ios::binary);
         if (!out) throw std::runtime_error("cannot open output");
         // Little-endian native protocol, checked by the Rust reader; no text rounding.
-        write<uint32_t>(out, 0x464c1737);
+        write<uint32_t>(out, 0x464c1738);
         write<float>(out, hdr ? used.startExposure : 0.0f);
         write<float>(out, hdr ? used.stopExposure : 0.0f);
         write<uint32_t>(out, hdr ? used.numExposures : 0);
@@ -76,6 +93,18 @@ int main(int argc, char** argv) {
         write<float>(out, pool.getPercentile(0.75f, true));
         write<float>(out, pool.getMinValue()); write<float>(out, pool.getMaxValue());
         for (size_t i = 0; i < 100; ++i) write<uint64_t>(out, pool.getHistogram().getBucketValue(i));
+        const float fractions[] = {0.0f, 0.01f, 0.25f, 0.5f, 0.75f, 0.9f, 0.95f, 0.99f, 0.999f};
+        write<uint32_t>(out, 10);
+        for (size_t i = 0; i < 10; ++i) {
+            float weightedP = i < 9 ? fractions[i] : fromBits(0x3f7fffff);
+            float unweightedP = i < 9 ? fractions[i] : largestDefinedPercentile(n);
+            bool defined = size_t(std::ceil(n * unweightedP)) < n;
+            write<float>(out, weightedP);
+            write<float>(out, unweightedP);
+            write<float>(out, pool.getPercentile(weightedP, true));
+            write<uint32_t>(out, defined ? 1 : 0);
+            write<float>(out, defined ? pool.getPercentile(unweightedP, false) : 0.0f);
+        }
         for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) write<float>(out, error.get(x, y));
         if (hdr) for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) write<float>(out, exposure.get(x, y));
         if (!out) throw std::runtime_error("write failed");
