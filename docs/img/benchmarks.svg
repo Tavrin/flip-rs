@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="650" height="374" viewBox="0 0 650 374" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" font-size="12">
+<style>text{fill:#1f2328}.muted{fill:#59636e}.axis{stroke:#d1d9e0}.bar-cpp{fill:#8c959f}.bar-rs1{fill:#e8743b}.bar-rs8{fill:#8250df}@media (prefers-color-scheme:dark){text{fill:#e6edf3}.muted{fill:#9198a1}.axis{stroke:#3d444d}.bar-cpp{fill:#768390}.bar-rs1{fill:#f0883e}.bar-rs8{fill:#a371f7}}</style>
+<text x="0" y="16" font-size="14" font-weight="600">Time relative to C++ -O2 on one thread (shorter is faster)</text>
+<text class="muted" x="0" y="34">Seconds per comparison, median of 3 runs, AMD Ryzen 9 7945HX. HDR: ACES, 3 exposures.</text>
+<rect class="bar-cpp" x="120" y="46" width="10" height="10"/>
+<text x="134" y="55">C++ -O2, 1 thread</text>
+<rect class="bar-rs1" x="271" y="46" width="10" height="10"/>
+<text x="285" y="55">Rust, 1 thread</text>
+<rect class="bar-rs8" x="401" y="46" width="10" height="10"/>
+<text x="415" y="55">Rust, 8 threads</text>
+<text x="112" y="98.0" text-anchor="end">LDR 1920×1080</text>
+<rect class="bar-cpp" x="120" y="70" width="440.0" height="14"/>
+<text x="566.0" y="81">0.697 s</text>
+<rect class="bar-rs1" x="120" y="87" width="218.8" height="14"/>
+<text x="344.8" y="98">0.347 s</text>
+<rect class="bar-rs8" x="120" y="104" width="128.2" height="14"/>
+<text x="254.2" y="115">0.203 s</text>
+<text x="112" y="164.0" text-anchor="end">HDR 1920×1080</text>
+<rect class="bar-cpp" x="120" y="136" width="440.0" height="14"/>
+<text x="566.0" y="147">2.070 s</text>
+<rect class="bar-rs1" x="120" y="153" width="169.8" height="14"/>
+<text x="295.8" y="164">0.799 s</text>
+<rect class="bar-rs8" x="120" y="170" width="40.3" height="14"/>
+<text x="166.3" y="181">0.190 s</text>
+<text x="112" y="230.0" text-anchor="end">LDR 3840×2160</text>
+<rect class="bar-cpp" x="120" y="202" width="440.0" height="14"/>
+<text x="566.0" y="213">3.146 s</text>
+<rect class="bar-rs1" x="120" y="219" width="203.1" height="14"/>
+<text x="329.1" y="230">1.452 s</text>
+<rect class="bar-rs8" x="120" y="236" width="84.4" height="14"/>
+<text x="210.4" y="247">0.603 s</text>
+<text x="112" y="296.0" text-anchor="end">HDR 3840×2160</text>
+<rect class="bar-cpp" x="120" y="268" width="440.0" height="14"/>
+<text x="566.0" y="279">8.252 s</text>
+<rect class="bar-rs1" x="120" y="285" width="180.2" height="14"/>
+<text x="306.2" y="296">3.379 s</text>
+<rect class="bar-rs8" x="120" y="302" width="63.9" height="14"/>
+<text x="189.9" y="313">1.199 s</text>
+<line class="axis" x1="120" y1="66" x2="120" y2="322"/>
+<text class="muted" x="0" y="366">8-thread C++ was not measured. Data: parity/results/benchmarks-*.md</text>
+</svg>

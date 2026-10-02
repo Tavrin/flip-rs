@@ -1,5 +1,10 @@
 # flip-rs
 
+[![crates.io](https://img.shields.io/crates/v/flip-rs.svg)](https://crates.io/crates/flip-rs)
+[![docs.rs](https://docs.rs/flip-rs/badge.svg)](https://docs.rs/flip-rs)
+[![CI](https://github.com/Tavrin/flip-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/Tavrin/flip-rs/actions/workflows/ci.yml)
+[![License: BSD-3-Clause](https://img.shields.io/crates/l/flip-rs.svg)](LICENSE)
+
 A Rust port of [NVIDIA FLIP](https://github.com/NVlabs/flip) v1.7, a
 perceptual metric for the difference a viewer sees when flipping between a
 reference and a test image. It computes LDR-FLIP for sRGB images and HDR-FLIP
@@ -9,6 +14,44 @@ statistics or rendered as a Magma heatmap.
 The library has no C or C++ dependencies and no `unsafe` code. With default
 features disabled it has no dependencies and builds for
 `wasm32-unknown-unknown`.
+
+![Reference, test and FLIP heatmap of a procedural scene](https://raw.githubusercontent.com/Tavrin/flip-rs/main/docs/img/hero.webp)
+
+*Reference (16 samples per pixel), test (1 sample, noise, a blurred sign and
+a bluer sky) and the LDR-FLIP error map computed by this crate. Brighter means
+a more visible difference.*
+
+**[Try it in your browser](https://tavrin.github.io/flip-rs/)**: compare two
+images with the WebAssembly build. Images stay on your machine.
+
+## Why flip-rs
+
+- Implements FLIP v1.7, the current upstream release (revision `b475eb4`).
+- LDR-FLIP and HDR-FLIP, with the ACES, Hable and Reinhard tone mappers.
+- Builds for `wasm32-unknown-unknown`, and runs in the browser.
+- No C or C++ toolchain needed: pure Rust, no `unsafe`.
+- Output identical to NVIDIA's C++ code on the 201-case parity corpus and on
+  all 2,974 defined cases of a 3,000-case randomized sweep
+  ([details](#parity-with-the-c-reference)).
+- 2.0–2.6× faster than the C++ reference on one thread, when the reference is
+  built with `g++ -O2` ([details](#performance)).
+- Validates input and bounds memory and work, returning errors instead of
+  NaN or aborting ([details](#limits-and-differences-from-the-reference)).
+
+## Alternatives
+
+[`nv-flip`](https://crates.io/crates/nv-flip) provides Rust bindings to
+NVIDIA's C++ implementation. Because it runs NVIDIA's own code, its results
+are authoritative by construction, and it is the right choice if you need
+NVIDIA's binary rather than a port. It also offers arbitrary weighted
+percentiles, where flip-rs reports the quartiles and the histogram. Its last
+release (0.1.2, July 2023) bundles the C++ sources from before v1.3 and
+supports LDR-FLIP only. It compiles C++ at build time, so it needs a C++
+compiler; wgpu's test suite, which uses it, disables it on wasm.
+
+NVIDIA also publishes a Python package,
+[`flip-evaluator`](https://pypi.org/project/flip-evaluator/), and the C++ and
+CUDA tool in the [upstream repository](https://github.com/NVlabs/flip).
 
 ## Installation
 
@@ -59,6 +102,14 @@ fn main() -> Result<(), flip_rs::FlipError> {
 }
 ```
 
+![HDR reference at four exposures above their LDR-FLIP error maps, and the HDR-FLIP result](https://raw.githubusercontent.com/Tavrin/flip-rs/main/docs/img/hdr-exposures.webp)
+
+*HDR-FLIP on a procedural scene with a sun far brighter than 1. The first four
+columns show the reference tone-mapped at four exposures between the
+automatic start and stop (−4.64 to +2.30 stops) and the error at that
+exposure alone. The last column shows the test image and the HDR-FLIP result,
+the largest error per pixel over the seven automatic exposures.*
+
 `ppd` is the number of pixels per degree of visual angle. `DEFAULT_PPD`
 (about 67.02) is the reference tool's default: a 0.7 m wide, 3840-pixel
 monitor viewed from 0.7 m. `pixels_per_degree` computes it for other setups.
@@ -107,6 +158,8 @@ explicit, automatic and partly automatic exposures.
 
 ## Performance
 
+![Bar chart of the timings in the table below](https://raw.githubusercontent.com/Tavrin/flip-rs/main/docs/img/benchmarks.svg)
+
 Median of three runs after one warm-up, on seeded noise at the default PPD.
 HDR uses ACES with three exposures. Times cover the comparison call (color
 conversion, tone mapping, filtering and allocation), not decoding or pooling.
@@ -140,13 +193,19 @@ export, `ldrFlip(referenceRgba, testRgba, width, height, ppd)`. It takes RGBA
 bytes such as `ImageData.data`, ignores alpha, returns a `Float32Array` with
 one error per pixel, and throws an `Error` for invalid input.
 
-To run the browser demo in `examples/web/`:
+The browser demo in `examples/web/` is published at
+<https://tavrin.github.io/flip-rs/>. It loads a sample pair, accepts dropped
+or chosen images, and shows the heatmap with the mean and maximum error.
+
+[![Screenshot of the browser demo](https://raw.githubusercontent.com/Tavrin/flip-rs/main/docs/img/demo.webp)](https://tavrin.github.io/flip-rs/)
+
+To run it locally:
 
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo build --release --target wasm32-unknown-unknown --no-default-features --features wasm
-wasm-bindgen --target web --out-dir pkg target/wasm32-unknown-unknown/release/flip_rs.wasm
-python3 -m http.server 8080   # then open http://localhost:8080/examples/web/
+wasm-bindgen --target web --out-dir examples/web/pkg target/wasm32-unknown-unknown/release/flip_rs.wasm
+python3 -m http.server 8080 --directory examples/web   # then open http://localhost:8080/
 ```
 
 The `wasm-bindgen` CLI version must match the `wasm-bindgen` crate version in

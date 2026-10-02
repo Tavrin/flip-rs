@@ -1,14 +1,15 @@
 [package]
 name = "flip-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Rust port of NVIDIA FLIP v1.7, a perceptual image-difference metric for LDR and HDR images"
 authors = ["flip-rs contributors"]
 license = "BSD-3-Clause"
 repository = "https://github.com/Tavrin/flip-rs"
+homepage = "https://tavrin.github.io/flip-rs/"
 readme = "README.md"
-keywords = ["flip", "image-comparison", "perceptual", "hdr", "image-quality"]
+keywords = ["flip", "nvidia", "perceptual", "visual-regression", "hdr"]
 categories = ["multimedia::images", "graphics", "wasm"]
 include = [
     "/src/**/*.rs",
@@ -41,6 +42,10 @@ required-features = ["image"]
 
 [[example]]
 name = "parity"
+required-features = ["image"]
+
+[[example]]
+name = "showcase"
 required-features = ["image"]
 
 [package.metadata.docs.rs]

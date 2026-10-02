@@ -6,6 +6,11 @@
 //! `b475eb4` to within 6e-8 per pixel on the measured corpus; see the
 //! repository's `parity/` directory for corpus and randomized sweep results.
 //!
+//! ![Reference, test and FLIP heatmap of a procedural scene](https://raw.githubusercontent.com/Tavrin/flip-rs/main/docs/img/hero.webp)
+//!
+//! A [browser demo](https://tavrin.github.io/flip-rs/) runs [`ldr_flip`]
+//! through the `wasm` feature on images you choose.
+//!
 //! # Algorithm
 //!
 //! [`ldr_flip`] converts both sRGB images to linear RGB and then to the YCxCz

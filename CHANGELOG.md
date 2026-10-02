@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - Unreleased
+
+Documentation and metadata only. The library code is unchanged.
+
+### Changed
+
+- README: example images, badges, a link to the browser demo, a summary of
+  differences from `nv-flip`, a benchmark chart and an HDR exposure figure.
+- Crate documentation links the example image and the browser demo.
+- Package metadata: `homepage` points to the browser demo, and the keywords
+  are `flip`, `nvidia`, `perceptual`, `visual-regression` and `hdr`.
+
+### Added (repository only, not in the published package)
+
+- `examples/showcase.rs` and `docs/img/generate.py`, which regenerate the
+  README images from procedural scenes.
+- The browser demo loads a sample pair, shows the reference, test and
+  heatmap side by side, and reports the mean and maximum error.
+- A GitHub Pages workflow for the demo, inactive until Pages is enabled.
+
 ## [0.1.0] - 2026-10-02
 
 First release.
@@ -47,4 +67,5 @@ initial port. Some change behaviour that earlier development builds had.
 - Benchmarks exclude C++ input restoration from timing, and the recorded
   results include source and executable hashes.
 
+[0.1.1]: https://github.com/Tavrin/flip-rs/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Tavrin/flip-rs/releases/tag/v0.1.0
